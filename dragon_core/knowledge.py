@@ -45,3 +45,13 @@ class KnowledgeBase:
 
 
 knowledge = KnowledgeBase()
+
+
+# Initial scientific knowledge
+knowledge.add(
+    "الخلية",
+    "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
+    "تختلف الخلايا في بنيتها ووظائفها، وتوجد خلايا بدائية النوى "
+    "وخلايا حقيقية النوى.",
+    "internal-scientific"
+)
