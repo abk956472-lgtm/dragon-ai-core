@@ -1,50 +1,35 @@
-from policies.security_policy import (
-    REQUIRE_CONFIRMATION_FOR_SENSITIVE_ACTIONS,
-    ALLOW_UNAUTHORIZED_ACTIONS,
-    ALLOW_DEFENSIVE_SECURITY_TASKS,
-    ALLOW_OFFENSIVE_SECURITY_TASKS,
-    ALLOW_EXTERNAL_TOOLS,
-    ALLOW_FILE_READ,
-    ALLOW_FILE_WRITE,
-    ALLOW_FILE_DELETE,
-    ALLOW_NETWORK_ACCESS,
-    ALLOW_SYSTEM_COMMANDS,
-)
+"""
+DRAGON AI CORE
+Central Security Policy
+"""
 
+SECURITY_POLICY_VERSION = "1.1.0"
 
-class SecurityManager:
-    def can_execute(self, action: str) -> bool:
-        if not ALLOW_UNAUTHORIZED_ACTIONS:
-            return False
+# General permissions
+REQUIRE_CONFIRMATION_FOR_SENSITIVE_ACTIONS = False
 
-        if action == "defensive_security":
-            return ALLOW_DEFENSIVE_SECURITY_TASKS
+# Core capabilities
+ALLOW_EXTERNAL_TOOLS = True
 
-        if action == "offensive_security":
-            return ALLOW_OFFENSIVE_SECURITY_TASKS
+# File operations
+ALLOW_FILE_READ = True
+ALLOW_FILE_WRITE = True
+ALLOW_FILE_DELETE = True
 
-        if action == "external_tool":
-            return ALLOW_EXTERNAL_TOOLS
+# Network operations
+ALLOW_NETWORK_ACCESS = True
 
-        if action == "file_read":
-            return ALLOW_FILE_READ
+# System administration
+ALLOW_SYSTEM_COMMANDS = True
 
-        if action == "file_write":
-            return ALLOW_FILE_WRITE
+# Defensive security
+ALLOW_DEFENSIVE_SECURITY_TASKS = True
 
-        if action == "file_delete":
-            return ALLOW_FILE_DELETE
+# Offensive security remains disabled
+ALLOW_OFFENSIVE_SECURITY_TASKS = False
 
-        if action == "network":
-            return ALLOW_NETWORK_ACCESS
+# Security logging
+ENABLE_SECURITY_LOG = True
 
-        if action == "system_command":
-            return ALLOW_SYSTEM_COMMANDS
-
-        return False
-
-    def requires_confirmation(self) -> bool:
-        return REQUIRE_CONFIRMATION_FOR_SENSITIVE_ACTIONS
-
-
-security = SecurityManager()
+# Privacy
+STORE_SENSITIVE_DATA_BY_DEFAULT = False
