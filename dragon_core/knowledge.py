@@ -30,13 +30,17 @@ class KnowledgeBase:
 
     def search(self, query: str):
         query = query.lower().strip()
+        words = query.split()
 
         with self._lock:
             return [
                 item
                 for item in self._items
-                if query in item.title.lower()
-                or query in item.content.lower()
+                if any(
+                    word in item.title.lower()
+                    or word in item.content.lower()
+                    for word in words
+                )
             ]
 
     def clear(self):
