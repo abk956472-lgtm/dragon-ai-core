@@ -1,11 +1,13 @@
 from .memory import memory
 from .knowledge import knowledge
 from .security import security
+from policies.scientific_policy import get_scientific_rules
 
 
 class DragonEngine:
     def __init__(self):
         self.name = "DRAGON AI CORE"
+        self.scientific_rules = get_scientific_rules()
 
     def process(self, message: str) -> dict:
         message = message.strip()
@@ -16,10 +18,8 @@ class DragonEngine:
                 "message": "Empty message."
             }
 
-        # Store the user's message in short-term memory.
         memory.add("user", message)
 
-        # Search the internal knowledge base.
         knowledge_results = knowledge.search(message)
 
         response = self._generate_response(
@@ -27,13 +27,14 @@ class DragonEngine:
             knowledge_results
         )
 
-        # Store DRAGON's response in memory.
         memory.add("assistant", response)
 
         return {
             "status": "success",
             "response": response,
             "knowledge_matches": len(knowledge_results),
+            "scientific_policy_version": "1.0.0",
+            "scientific_rules_active": len(self.scientific_rules),
             "security_confirmation_required":
                 security.requires_confirmation()
         }
@@ -46,7 +47,7 @@ class DragonEngine:
 
         return (
             "DRAGON AI CORE استلم رسالتك بنجاح. "
-            "محرك الذكاء الأساسي قيد التطوير."
+            "محرك الذكاء العلمي قيد التطوير."
         )
 
 
