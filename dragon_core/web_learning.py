@@ -3,7 +3,8 @@ DRAGON AI CORE
 Web Learning Engine
 
 مسؤول عن:
-- استقبال روابط HTTP/HTTPS.
+- استقبال روابط HTTP/HTTPS عند الحاجة.
+- البحث تلقائيًا في الإنترنت انطلاقًا من سؤال المستخدم.
 - جلب محتوى صفحات الويب.
 - استخراج النص من HTML.
 - إزالة العناصر غير المفيدة مثل script وstyle.
@@ -13,8 +14,8 @@ Web Learning Engine
 - منع الوصول إلى عناوين الشبكات الداخلية والمحلية.
 
 ملاحظة:
-هذا الملف لا يحفظ المعرفة مباشرة.
-الحفظ يتم من خلال self_learning.py.
+البحث في الإنترنت لا يحفظ المعرفة مباشرة.
+الحفظ يتم من خلال self_learning.py بعد مرحلة التحقق.
 """
 
 from html.parser import HTMLParser
@@ -22,7 +23,12 @@ from ipaddress import ip_address
 from socket import getaddrinfo
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import (
+    parse_qs,
+    unquote,
+    urlencode,
+    urlparse,
+)
 from urllib.request import Request, urlopen
 
 from .self_learning import self_learning
@@ -87,15 +93,146 @@ class WebTextExtractor(HTMLParser):
         return " ".join(self._parts)
 
 
+class WebSearchExtractor(HTMLParser):
+    """
+    استخراج نتائج البحث من صفحة محرك البحث.
+
+    هذه الفئة لا تحفظ أي معرفة.
+    """
+
+    def __init__(self):
+        super().__init__(
+            convert_charrefs=True
+        )
+
+        self._results = []
+        self._current = None
+        self._in_title = False
+        self._in_snippet = False
+
+    def handle_starttag(
+        self,
+        tag,
+        attrs
+    ):
+        attrs_dict = dict(attrs)
+
+        classes = set(
+            attrs_dict.get(
+                "class",
+                ""
+            ).split()
+        )
+
+        if (
+            tag.lower() == "a"
+            and "result__a" in classes
+        ):
+            self._finish_current()
+
+            self._current = {
+                "title_parts": [],
+                "snippet_parts": [],
+                "url": attrs_dict.get(
+                    "href",
+                    ""
+                ),
+            }
+
+            self._in_title = True
+            self._in_snippet = False
+
+        elif (
+            self._current
+            and "result__snippet" in classes
+        ):
+            self._in_title = False
+            self._in_snippet = True
+
+    def handle_endtag(
+        self,
+        tag
+    ):
+        if tag.lower() == "a":
+            self._in_title = False
+            self._in_snippet = False
+
+    def handle_data(
+        self,
+        data
+    ):
+        if not self._current:
+            return
+
+        text = data.strip()
+
+        if not text:
+            return
+
+        if self._in_title:
+            self._current[
+                "title_parts"
+            ].append(text)
+
+        elif self._in_snippet:
+            self._current[
+                "snippet_parts"
+            ].append(text)
+
+    def _finish_current(self):
+        if not self._current:
+            return
+
+        title = " ".join(
+            self._current[
+                "title_parts"
+            ]
+        ).strip()
+
+        snippet = " ".join(
+            self._current[
+                "snippet_parts"
+            ]
+        ).strip()
+
+        url = self._current[
+            "url"
+        ]
+
+        if title and url:
+            self._results.append({
+                "title": title,
+                "snippet": snippet,
+                "url": url,
+            })
+
+        self._current = None
+
+    def get_results(self):
+        self._finish_current()
+        return list(self._results)
+
+
 class WebLearningEngine:
     """
-    محرك التعلّم من الإنترنت.
+    محرك التعلّم والبحث من الإنترنت.
 
-    هذا المحرك يجمع المحتوى فقط ثم يمرره
-    إلى SelfLearningEngine.
+    المسار الجديد:
+
+    سؤال المستخدم
+        ↓
+    بحث في الإنترنت
+        ↓
+    جمع المصادر
+        ↓
+    جلب محتوى المصادر
+        ↓
+    التحقق لاحقًا
+        ↓
+    الحفظ عبر self_learning.py
 
     لا يتم اعتبار المصدر حقيقة مثبتة
-    لمجرد أنه موجود على الإنترنت.
+    لمجرد وجوده على الإنترنت.
     """
 
     ALLOWED_SCHEMES = {
@@ -109,6 +246,16 @@ class WebLearningEngine:
 
     MAX_CONTENT_CHARS = 50_000
 
+    MAX_SEARCH_RESULTS = 5
+
+    MAX_SEARCH_SOURCES_TO_FETCH = 2
+
+    MAX_SEARCH_CONTENT_CHARS = 12_000
+
+    SEARCH_ENGINE_URL = (
+        "https://html.duckduckgo.com/html/"
+    )
+
     USER_AGENT = (
         "DRAGON-AI-CORE/"
         "1.0 "
@@ -121,6 +268,195 @@ class WebLearningEngine:
     # ==========================================================
     # Public API
     # ==========================================================
+
+    def search_web(
+        self,
+        question: str
+    ) -> dict:
+        """
+        البحث تلقائيًا في الإنترنت انطلاقًا
+        من سؤال المستخدم.
+
+        هذه الوظيفة تجمع المصادر فقط.
+        لا تحفظ المعرفة ولا تعتبر النتائج
+        حقائق مثبتة.
+        """
+
+        if not question:
+            return {
+                "status": "rejected",
+                "reason": "Search question is required.",
+            }
+
+        clean_question = " ".join(
+            question.strip().split()
+        )
+
+        if len(clean_question) < 2:
+            return {
+                "status": "rejected",
+                "reason": "Search question is too short.",
+            }
+
+        search_url = (
+            self.SEARCH_ENGINE_URL
+            + "?"
+            + urlencode({
+                "q": clean_question,
+                "kl": "wt-wt",
+            })
+        )
+
+        validation = self._validate_url(
+            search_url
+        )
+
+        if not validation["valid"]:
+            result = {
+                "status": "rejected",
+                "reason": validation["reason"],
+            }
+
+            self.last_result = result
+            return result
+
+        fetch_result = self._fetch_url(
+            search_url
+        )
+
+        if fetch_result["status"] != "success":
+            result = {
+                "status": "error",
+                "reason": "Web search failed.",
+                "details": fetch_result,
+            }
+
+            self.last_result = result
+            return result
+
+        parser = WebSearchExtractor()
+
+        try:
+            parser.feed(
+                fetch_result["content"]
+            )
+            parser.close()
+
+        except Exception as error:
+            result = {
+                "status": "error",
+                "reason": (
+                    f"Search result parsing failed: "
+                    f"{error}"
+                ),
+            }
+
+            self.last_result = result
+            return result
+
+        search_results = (
+            parser.get_results()
+        )
+
+        if not search_results:
+            result = {
+                "status": "no_results",
+                "question": clean_question,
+                "results": [],
+                "source_count": 0,
+                "knowledge_saved": False,
+                "evidence_status": "unverified",
+            }
+
+            self.last_result = result
+            return result
+
+        results = []
+        seen_urls = set()
+
+        for item in search_results[
+            :self.MAX_SEARCH_RESULTS
+        ]:
+
+            source_url = (
+                self._normalize_search_result_url(
+                    item["url"]
+                )
+            )
+
+            if not source_url:
+                continue
+
+            if source_url in seen_urls:
+                continue
+
+            seen_urls.add(source_url)
+
+            validation = self._validate_url(
+                source_url
+            )
+
+            if not validation["valid"]:
+                continue
+
+            source_url = validation["url"]
+
+            result_item = {
+                "title": item["title"],
+                "url": source_url,
+                "snippet": item["snippet"],
+                "content": "",
+                "content_status": "not_fetched",
+            }
+
+            if (
+                len(results)
+                < self.MAX_SEARCH_SOURCES_TO_FETCH
+            ):
+                prepared = self.prepare_source(
+                    source_url,
+                    item["title"]
+                )
+
+                if (
+                    prepared.get("status")
+                    == "prepared"
+                ):
+                    content = prepared.get(
+                        "content",
+                        ""
+                    )
+
+                    result_item[
+                        "content"
+                    ] = content[
+                        :self.MAX_SEARCH_CONTENT_CHARS
+                    ]
+
+                    result_item[
+                        "content_length"
+                    ] = len(content)
+
+                    result_item[
+                        "content_status"
+                    ] = "fetched"
+
+            results.append(
+                result_item
+            )
+
+        result = {
+            "status": "success",
+            "question": clean_question,
+            "results": results,
+            "source_count": len(results),
+            "knowledge_saved": False,
+            "evidence_status": "unverified",
+        }
+
+        self.last_result = result
+
+        return result
 
     def learn_from_url(
         self,
@@ -213,6 +549,60 @@ class WebLearningEngine:
         self.last_result = response
 
         return response
+
+    # ==========================================================
+    # Search URL normalization
+    # ==========================================================
+
+    def _normalize_search_result_url(
+        self,
+        url: str
+    ) -> str:
+        """
+        تحويل روابط نتائج البحث إلى الرابط الأصلي.
+        """
+
+        if not url:
+            return ""
+
+        clean_url = url.strip()
+
+        if clean_url.startswith("//"):
+            clean_url = (
+                "https:"
+                + clean_url
+            )
+
+        try:
+            parsed = urlparse(
+                clean_url
+            )
+
+            if (
+                parsed.hostname
+                and parsed.hostname.endswith(
+                    "duckduckgo.com"
+                )
+                and parsed.path == "/l/"
+            ):
+                query = parse_qs(
+                    parsed.query
+                )
+
+                target = query.get(
+                    "uddg",
+                    [""]
+                )[0]
+
+                if target:
+                    return unquote(
+                        target
+                    )
+
+        except Exception:
+            return ""
+
+        return clean_url
 
     # ==========================================================
     # URL validation
