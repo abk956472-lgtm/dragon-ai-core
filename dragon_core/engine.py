@@ -22,29 +22,29 @@ class DragonEngine:
                 "message": "Empty message."
             }
 
-        # حفظ سؤال المستخدم
         memory.add(
             "user",
             message
         )
 
-        # البحث في قاعدة المعرفة
+        # ==============================================
+        # Scientific Learning Command
+        # Format:
+        # تعلم | title | content | source | type
+        # ==============================================
+
+        if message.startswith("تعلم |"):
+            return self._process_learning_command(message)
+
         knowledge_results = knowledge.search(message)
 
-        # البحث في الذاكرة العلمية السابقة
         previous_memories = memory.search_scientific(message)
 
-        # توليد الرد
         response, evidence_evaluation = self._generate_response(
             message,
             knowledge_results,
             previous_memories
         )
-
-        # ==================================================
-        # حفظ الرد العلمي الأساسي فقط
-        # لا نحفظ الجزء الذي يعرض الذاكرة السابقة
-        # ==================================================
 
         memory_content = response
 
@@ -57,7 +57,6 @@ class DragonEngine:
                     1
                 )[0]
 
-        # لا نحفظ رد ذاكرة خالص كذاكرة علمية جديدة
         if memory_content.strip():
             memory.add(
                 "assistant",
@@ -88,16 +87,51 @@ class DragonEngine:
                 security.requires_confirmation()
         }
 
+    def _process_learning_command(
+        self,
+        message: str
+    ) -> dict:
+        parts = [
+            part.strip()
+            for part in message.split("|")
+        ]
+
+        if len(parts) != 5:
+            return {
+                "status": "error",
+                "message": (
+                    "صيغة التعلم غير صحيحة. "
+                    "استخدم: تعلم | العنوان | المحتوى | المصدر | "
+                    "fact/inference/hypothesis"
+                )
+            }
+
+        _, title, content, source, knowledge_type = parts
+
+        result = knowledge.learn(
+            title=title,
+            content=content,
+            source=source,
+            knowledge_type=knowledge_type
+        )
+
+        return {
+            "status": result["status"],
+            "learning": result,
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
     def _generate_response(
         self,
         message,
         knowledge_results,
         previous_memories
     ):
-        # ==================================================
-        # لا توجد معلومات في قاعدة المعرفة
-        # ==================================================
-
         if not knowledge_results:
             if previous_memories:
                 return (
@@ -117,10 +151,6 @@ class DragonEngine:
                 "evidence_status": "insufficient",
                 "confidence": "low"
             }
-
-        # ==================================================
-        # نتيجة معرفية واحدة
-        # ==================================================
 
         if len(knowledge_results) == 1:
             result = knowledge_results[0]
@@ -157,10 +187,6 @@ class DragonEngine:
                 )
 
             return response, evidence_evaluation
-
-        # ==================================================
-        # عدة نتائج معرفية
-        # ==================================================
 
         sections = []
 
