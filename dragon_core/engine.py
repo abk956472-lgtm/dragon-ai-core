@@ -46,7 +46,6 @@ class DragonEngine:
                 "في قاعدة المعرفة."
             )
 
-        # إذا كانت هناك معلومة واحدة مرتبطة بالسؤال
         if len(knowledge_results) == 1:
             result = knowledge_results[0]
 
@@ -61,7 +60,6 @@ class DragonEngine:
                 result.knowledge_type
             )
 
-        # إذا كانت هناك عدة معلومات مرتبطة بالسؤال
         sections = []
 
         for index, result in enumerate(
@@ -75,45 +73,68 @@ class DragonEngine:
                 f"المصدر: {result.source}"
             )
 
-        response = (
-            "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
-            + "\n\n".join(sections)
-            + "\n\n"
-            "حالة المعرفة: تم جمع عدة عناصر معرفية "
-            "مرتبطة بالسؤال، ويجب تحليلها معًا قبل بناء استنتاج."
+        evidence = "\n\n".join(sections)
+
+        inference = self._build_scientific_inference(
+            knowledge_results
         )
 
-        return response
+        return (
+            "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
+            f"{evidence}\n\n"
+            f"{inference}"
+        )
+
+    def _build_scientific_inference(
+        self,
+        knowledge_results
+    ):
+        facts = [
+            item
+            for item in knowledge_results
+            if item.knowledge_type == "fact"
+        ]
+
+        inferences = [
+            item
+            for item in knowledge_results
+            if item.knowledge_type == "inference"
+        ]
+
+        hypotheses = [
+            item
+            for item in knowledge_results
+            if item.knowledge_type == "hypothesis"
+        ]
+
+        parts = []
+
+        if facts:
+            parts.append(
+                "المعلومات المؤكدة المتاحة: "
+                f"{len(facts)} عنصر/عناصر."
+            )
+
+        if inferences:
+            parts.append(
+                "الاستنتاجات الموجودة مسبقًا: "
+                f"{len(inferences)} عنصر/عناصر."
+            )
+
+        if hypotheses:
+            parts.append(
+                "الفرضيات الموجودة: "
+                f"{len(hypotheses)} عنصر/عناصر."
+            )
+
+        parts.append(
+            "الاستنتاج العلمي الحالي: "
+            "المعلومات المسترجعة لا تكفي وحدها لإثبات "
+            "علاقة علمية جديدة بين هذه العناصر. "
+            "لذلك لا يتم تحويلها إلى حقيقة دون أدلة إضافية."
+        )
+
+        return "\n".join(parts)
 
     def _apply_scientific_policy(
         self,
-        response: str,
-        knowledge_type: str
-    ):
-
-        if knowledge_type == "fact":
-            policy_note = (
-                "الحالة العلمية: حقيقة مسجلة في قاعدة المعرفة."
-            )
-
-        elif knowledge_type == "inference":
-            policy_note = (
-                "الحالة العلمية: استنتاج يعتمد على المعلومات "
-                "والبيانات المتاحة، وليس حقيقة عامة بالضرورة."
-            )
-
-        elif knowledge_type == "hypothesis":
-            policy_note = (
-                "الحالة العلمية: فرضية وليست حقيقة مثبتة، "
-                "وتحتاج إلى أدلة وتجارب للتحقق منها."
-            )
-
-        else:
-            policy_note = (
-                "الحالة العلمية: نوع المعرفة غير معروف."
-            )
-
-        return f"{response}\n{policy_note}"
-
-
-dragon_engine = DragonEngine()
