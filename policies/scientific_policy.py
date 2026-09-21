@@ -38,6 +38,20 @@ def evaluate_evidence(
     هذا التقييم لا يثبت صحة أي استنتاج علمي.
     """
 
+    # الحقيقة المسجلة في قاعدة المعرفة
+    # تبقى حقيقة معرفية، لكن ذلك لا يعني
+    # إثبات ادعاء علمي جديد.
+    if facts_count > 0 and inference_count == 0 and hypothesis_count == 0:
+        return {
+            "evidence_status": "available",
+            "confidence": "moderate",
+            "reason": (
+                "توجد حقيقة مسجلة في قاعدة المعرفة. "
+                "هذا يصف حالة المعرفة المسجلة ولا يعني "
+                "إثبات استنتاج علمي جديد."
+            )
+        }
+
     if facts_count == 0:
         return {
             "evidence_status": "insufficient",
