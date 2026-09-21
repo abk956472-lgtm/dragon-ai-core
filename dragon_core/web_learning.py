@@ -690,6 +690,125 @@ class WebLearningEngine:
         return url
 
     # ---------------------------------------------------------
+    # PREPARE SEARCH QUERY
+    # ---------------------------------------------------------
+
+    def _prepare_search_query(
+        self,
+        question: str
+    ):
+        query = " ".join(
+            str(question)
+            .strip()
+            .split()
+        )
+
+        if not query:
+            return ""
+
+        # علامات الاستفهام والجمل الطويلة لا تضيف
+        # قيمة كبيرة إلى الاستعلام الآلي.
+        punctuation = (
+            "؟?!.,:;،؛"
+        )
+
+        for mark in punctuation:
+            query = query.replace(
+                mark,
+                " "
+            )
+
+        words = query.split()
+
+        ignored_words = {
+            # Arabic question / linking words
+            "ما",
+            "ماذا",
+            "ماهو",
+            "ماهي",
+            "هل",
+            "هو",
+            "هي",
+            "من",
+            "متى",
+            "اين",
+            "أين",
+            "كيف",
+            "لماذا",
+            "عن",
+            "في",
+            "على",
+            "الى",
+            "إلى",
+            "من",
+            "هذا",
+            "هذه",
+            "ذلك",
+            "تلك",
+            "و",
+            "او",
+            "أو",
+            "مع",
+
+            # English question / linking words
+            "what",
+            "which",
+            "who",
+            "when",
+            "where",
+            "why",
+            "how",
+            "is",
+            "are",
+            "was",
+            "were",
+            "do",
+            "does",
+            "did",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "of",
+            "to",
+            "in",
+            "on",
+            "for",
+            "with",
+            "about",
+            "from",
+            "by",
+        }
+
+        meaningful_words = []
+
+        for word in words:
+            cleaned_word = word.strip()
+
+            if not cleaned_word:
+                continue
+
+            if cleaned_word.lower() in ignored_words:
+                continue
+
+            if len(cleaned_word) <= 1:
+                continue
+
+            meaningful_words.append(
+                cleaned_word
+            )
+
+        # إذا كان السؤال قصيرًا جدًا، نستخدمه كما هو
+        # بدلًا من فقدان معلومات مهمة.
+        if not meaningful_words:
+            return query
+
+        return " ".join(
+            meaningful_words
+        )
+
+    # ---------------------------------------------------------
     # SEARCH WEB
     # ---------------------------------------------------------
 
@@ -709,12 +828,22 @@ class WebLearningEngine:
                 "message": "السؤال فارغ.",
             }
 
+        search_query = self._prepare_search_query(
+            clean_question
+        )
+
+        if not search_query:
+            return {
+                "status": "error",
+                "message": "تعذر تجهيز استعلام البحث.",
+            }
+
         search_url = (
             SEARCH_ENGINE_URL
             + "?"
             + urlencode(
                 {
-                    "q": clean_question,
+                    "q": search_query,
                     "form": "QBLH",
                 }
             )
@@ -857,6 +986,7 @@ class WebLearningEngine:
             return {
                 "status": "success",
                 "question": clean_question,
+                "search_query": search_query,
                 "results": [],
                 "source_count": 0,
                 "knowledge_saved": False,
@@ -897,6 +1027,7 @@ class WebLearningEngine:
         return {
             "status": "success",
             "question": clean_question,
+            "search_query": search_query,
             "results": final_results,
             "source_count": len(
                 final_results
