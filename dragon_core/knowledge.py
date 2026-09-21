@@ -50,6 +50,37 @@ class KnowledgeBase:
     def search(self, query: str):
         query = query.lower().strip()
 
+        if not query:
+            return []
+
+        ignored_words = {
+            "ما",
+            "ماذا",
+            "هي",
+            "هو",
+            "من",
+            "عن",
+            "في",
+            "على",
+            "إلى",
+            "هل",
+            "و",
+            "أو",
+            "مع",
+            "هذا",
+            "هذه",
+            "ذلك",
+            "تلك",
+            "التي",
+            "الذي"
+        }
+
+        words = [
+            word
+            for word in query.split()
+            if len(word) > 2 and word not in ignored_words
+        ]
+
         with self._lock:
             scored_results = []
 
@@ -58,41 +89,46 @@ class KnowledgeBase:
                 content = item.content.lower()
 
                 score = 0
+                matched_words = 0
 
-                # مطابقة العبارة كاملة مع العنوان
+                # مطابقة السؤال كاملًا
                 if query in title:
-                    score += 10
+                    score += 20
 
-                # مطابقة العبارة كاملة مع المحتوى
                 if query in content:
-                    score += 3
+                    score += 5
 
-                # مطابقة الكلمات المهمة فقط
-                words = [
-                    word for word in query.split()
-                    if len(word) > 2
-                ]
-
+                # مطابقة الكلمات المهمة
                 for word in words:
                     if word in title:
-                        score += 5
+                        score += 10
+                        matched_words += 1
 
-                    if word in content:
-                        score += 1
+                    elif word in content:
+                        score += 2
+                        matched_words += 1
 
-                if score > 0:
+                if matched_words > 0 or query in title:
                     scored_results.append(
-                        (score, item)
+                        (
+                            score,
+                            matched_words,
+                            item
+                        )
                     )
 
             scored_results.sort(
-                key=lambda result: result[0],
+                key=lambda result: (
+                    result[0],
+                    result[1]
+                ),
                 reverse=True
             )
 
             return [
                 item
-                for score, item in scored_results
+                for score, matched_words, item
+                in scored_results
             ]
 
     def clear(self):
@@ -102,6 +138,10 @@ class KnowledgeBase:
 
 knowledge = KnowledgeBase()
 
+
+# ==============================
+# Scientific Knowledge
+# ==============================
 
 # Scientific fact
 knowledge.add(
@@ -116,23 +156,4 @@ knowledge.add(
 
 # Scientific hypothesis
 knowledge.add(
-    "مثال على فرضية علمية",
-    "هذه فرضية علمية توضيحية وليست حقيقة مثبتة: "
-    "قد يؤثر عامل بيئي معين في معدل نمو كائن حي، "
-    "لكن إثبات هذه الفرضية يتطلب تجارب وبيانات قابلة للتحقق.",
-    "internal-scientific",
-    "hypothesis"
-)
-
-
-# Scientific inference
-knowledge.add(
-    "مثال على استنتاج علمي",
-    "إذا أظهرت مجموعة من التجارب أن ارتفاع درجة الحرارة ضمن "
-    "نطاق محدد يرتبط بزيادة معدل تفاعل معين، فيمكن استنتاج "
-    "وجود علاقة بين درجة الحرارة ومعدل التفاعل ضمن شروط التجربة. "
-    "هذا الاستنتاج يعتمد على البيانات المتاحة ولا يعني بالضرورة "
-    "وجود علاقة عامة في جميع الظروف.",
-    "internal-scientific",
-    "inference"
-)
+    "مث
