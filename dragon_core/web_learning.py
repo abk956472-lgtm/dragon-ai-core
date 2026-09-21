@@ -20,6 +20,8 @@ MAX_RESULTS = 5
 
 MAX_CONTENT_LENGTH = 12000
 
+MIN_RELEVANCE_SCORE = 2
+
 
 class WebLearning:
     def __init__(self):
@@ -65,6 +67,10 @@ class WebLearning:
             "أخبرني عن",
             "هل يمكنك أن تخبرني عن",
             "هل يمكنك ان تخبرني عن",
+            "اريد ان اعرف",
+            "أريد أن أعرف",
+            "اخبرني",
+            "أخبرني",
             "tell me about",
             "what is",
             "what are",
@@ -95,7 +101,60 @@ class WebLearning:
 
         return cleaned
 
-    def _normalize_search_url(self, url: str) -> str:
+    def _build_query_variants(
+        self,
+        query: str
+    ):
+        prepared = self._prepare_search_query(query)
+
+        if not prepared:
+            return []
+
+        variants = [prepared]
+
+        lowered = prepared.lower()
+
+        if "2026" in lowered:
+            without_year = re.sub(
+                r"\b2026\b",
+                " ",
+                prepared
+            )
+
+            without_year = re.sub(
+                r"\s+",
+                " ",
+                without_year
+            ).strip()
+
+            if without_year:
+                variants.append(
+                    f"{without_year} 2026"
+                )
+
+        if any(
+            char in prepared
+            for char in "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"
+        ):
+            variants.append(
+                f"{prepared} artificial intelligence generative AI"
+            )
+
+        unique = []
+
+        for variant in variants:
+            variant = variant.strip()
+
+            if variant and variant not in unique:
+                unique.append(variant)
+
+        return unique[:3]
+
+    def _normalize_search_url(
+        self,
+        url: str
+    ) -> str:
+
         if not url:
             return ""
 
@@ -127,7 +186,11 @@ class WebLearning:
 
         return url
 
-    def _decode_bing_url(self, value: str) -> str:
+    def _decode_bing_url(
+        self,
+        value: str
+    ) -> str:
+
         if not value:
             return ""
 
@@ -164,7 +227,11 @@ class WebLearning:
 
         return ""
 
-    def _valid_url(self, url: str) -> bool:
+    def _valid_url(
+        self,
+        url: str
+    ) -> bool:
+
         if not url:
             return False
 
@@ -179,7 +246,11 @@ class WebLearning:
         except Exception:
             return False
 
-    def _clean_text(self, text: str) -> str:
+    def _clean_text(
+        self,
+        text: str
+    ) -> str:
+
         if not text:
             return ""
 
@@ -199,10 +270,113 @@ class WebLearning:
 
         return text
 
+    def _tokenize(
+        self,
+        text: str
+    ):
+        text = self._clean_text(text).lower()
+
+        text = re.sub(
+            r"[^\w\u0600-\u06ff]+",
+            " ",
+            text,
+            flags=re.UNICODE
+        )
+
+        tokens = [
+            token
+            for token in text.split()
+            if len(token) >= 3
+        ]
+
+        return set(tokens)
+
+    def _relevance_score(
+        self,
+        query: str,
+        result: dict
+    ) -> int:
+
+        query_tokens = self._tokenize(query)
+
+        if not query_tokens:
+            return 0
+
+        title = self._tokenize(
+            result.get("title", "")
+        )
+
+        snippet = self._tokenize(
+            result.get("snippet", "")
+        )
+
+        content = self._tokenize(
+            result.get("content", "")[:6000]
+        )
+
+        score = 0
+
+        title_matches = (
+            query_tokens.intersection(title)
+        )
+
+        snippet_matches = (
+            query_tokens.intersection(snippet)
+        )
+
+        content_matches = (
+            query_tokens.intersection(content)
+        )
+
+        score += len(title_matches) * 4
+        score += len(snippet_matches) * 2
+        score += len(content_matches)
+
+        return score
+
+    def _is_low_quality_url(
+        self,
+        url: str
+    ) -> bool:
+
+        if not url:
+            return True
+
+        try:
+            parsed = urllib.parse.urlparse(
+                url
+            )
+
+            hostname = (
+                parsed.netloc
+                .lower()
+                .split(":")[0]
+            )
+
+        except Exception:
+            return True
+
+        blocked_patterns = [
+            "xpaja.",
+            "porn",
+            "xxx",
+            "xvideos.",
+            "xnxx.",
+            "redtube.",
+            "pornhub.",
+            "onlyfans.",
+        ]
+
+        return any(
+            pattern in hostname
+            for pattern in blocked_patterns
+        )
+
     def _parse_bing_rss(
         self,
         xml_text: str
     ):
+
         results = []
 
         if not xml_text:
@@ -219,6 +393,7 @@ class WebLearning:
         for item in root.findall(
             ".//item"
         ):
+
             title_element = item.find(
                 "title"
             )
@@ -267,6 +442,11 @@ class WebLearning:
             if not self._valid_url(url):
                 continue
 
+            if self._is_low_quality_url(
+                url
+            ):
+                continue
+
             results.append(
                 {
                     "title": title,
@@ -274,9 +454,6 @@ class WebLearning:
                     "snippet": snippet,
                 }
             )
-
-            if len(results) >= MAX_RESULTS:
-                break
 
         return results
 
@@ -371,23 +548,10 @@ class WebLearning:
         except Exception:
             return ""
 
-    def search_web(
+    def _search_bing(
         self,
-        query: str
+        search_query: str
     ):
-
-        search_query = (
-            self._prepare_search_query(
-                query
-            )
-        )
-
-        if not search_query:
-            return {
-                "status": "error",
-                "message": "Empty search query.",
-                "results": [],
-            }
 
         try:
             response = self.session.get(
@@ -395,6 +559,7 @@ class WebLearning:
                 params={
                     "q": search_query,
                     "format": "rss",
+                    "setlang": "en-us",
                 },
                 headers={
                     "Accept": (
@@ -413,94 +578,166 @@ class WebLearning:
 
             response.raise_for_status()
 
-            xml_text = response.text
-
-            results = self._parse_bing_rss(
-                xml_text
+            return self._parse_bing_rss(
+                response.text
             )
 
-            if not results:
-                return {
-                    "status": "empty",
-                    "search_query": search_query,
-                    "results": [],
-                    "message": (
-                        "No valid Bing RSS results."
-                    ),
-                }
+        except Exception:
+            return []
 
-            final_results = []
+    def search_web(
+        self,
+        query: str
+    ):
 
-            for result in results:
+        search_query = (
+            self._prepare_search_query(
+                query
+            )
+        )
 
-                title = result.get(
-                    "title",
-                    ""
-                )
+        if not search_query:
+            return {
+                "status": "error",
+                "message": "Empty search query.",
+                "results": [],
+            }
+
+        query_variants = (
+            self._build_query_variants(
+                query
+            )
+        )
+
+        collected = []
+
+        seen_urls = set()
+
+        for variant in query_variants:
+
+            raw_results = self._search_bing(
+                variant
+            )
+
+            for result in raw_results:
 
                 url = result.get(
                     "url",
                     ""
                 )
 
-                snippet = result.get(
-                    "snippet",
-                    ""
+                if not url:
+                    continue
+
+                if url in seen_urls:
+                    continue
+
+                seen_urls.add(url)
+
+                collected.append(
+                    result
                 )
 
-                content = ""
+                if len(collected) >= 15:
+                    break
 
-                if self._valid_url(url):
-                    content = self._fetch_page(
-                        url
-                    )
+            if len(collected) >= 15:
+                break
 
-                final_results.append(
-                    {
-                        "title": title,
-                        "url": url,
-                        "snippet": snippet,
-                        "content": content,
-                    }
+        if not collected:
+            return {
+                "status": "empty",
+                "search_query": search_query,
+                "results": [],
+                "message": (
+                    "No valid search results."
+                ),
+            }
+
+        enriched_results = []
+
+        for result in collected:
+
+            title = result.get(
+                "title",
+                ""
+            )
+
+            url = result.get(
+                "url",
+                ""
+            )
+
+            snippet = result.get(
+                "snippet",
+                ""
+            )
+
+            content = ""
+
+            if self._valid_url(url):
+                content = self._fetch_page(
+                    url
                 )
 
-            return {
-                "status": "success",
-                "search_query": search_query,
-                "results": final_results,
+            enriched = {
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "content": content,
             }
 
-        except requests.Timeout:
+            score = self._relevance_score(
+                search_query,
+                enriched
+            )
+
+            enriched[
+                "relevance_score"
+            ] = score
+
+            enriched_results.append(
+                enriched
+            )
+
+        enriched_results.sort(
+            key=lambda item: item.get(
+                "relevance_score",
+                0
+            ),
+            reverse=True
+        )
+
+        relevant_results = [
+            item
+            for item in enriched_results
+            if item.get(
+                "relevance_score",
+                0
+            ) >= MIN_RELEVANCE_SCORE
+        ]
+
+        relevant_results = (
+            relevant_results[:MAX_RESULTS]
+        )
+
+        if not relevant_results:
             return {
-                "status": "error",
-                "message": (
-                    "Web search timed out."
-                ),
+                "status": "empty",
                 "search_query": search_query,
                 "results": [],
+                "message": (
+                    "Search completed, but "
+                    "no sufficiently relevant "
+                    "results were found."
+                ),
             }
 
-        except requests.RequestException as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"Web search request failed: "
-                    f"{str(exc)}"
-                ),
-                "search_query": search_query,
-                "results": [],
-            }
-
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"Web search failed: "
-                    f"{str(exc)}"
-                ),
-                "search_query": search_query,
-                "results": [],
-            }
+        return {
+            "status": "success",
+            "search_query": search_query,
+            "results": relevant_results,
+        }
 
     def learn_from_url(
         self,
