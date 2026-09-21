@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+ممfrom dataclasses import dataclass
 from threading import Lock
 
 
