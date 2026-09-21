@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from dragon_core.engine import dragon_engine
@@ -7,6 +8,15 @@ from dragon_core.engine import dragon_engine
 app = FastAPI(
     title="DRAGON AI CORE",
     version="1.2.0"
+)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
