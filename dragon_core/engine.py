@@ -40,7 +40,14 @@ class DragonEngine:
         }
 
     def _generate_response(self, message, knowledge_results):
-        if knowledge_results:
+        if not knowledge_results:
+            return (
+                "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
+                "في قاعدة المعرفة."
+            )
+
+        # إذا كانت هناك معلومة واحدة مرتبطة بالسؤال
+        if len(knowledge_results) == 1:
             result = knowledge_results[0]
 
             response = (
@@ -49,23 +56,40 @@ class DragonEngine:
                 f"المصدر: {result.source}"
             )
 
-            response = self._apply_scientific_policy(
+            return self._apply_scientific_policy(
                 response,
                 result.knowledge_type
             )
 
-            return response
+        # إذا كانت هناك عدة معلومات مرتبطة بالسؤال
+        sections = []
 
-        return (
-            "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
-            "في قاعدة المعرفة."
+        for index, result in enumerate(
+            knowledge_results,
+            start=1
+        ):
+            sections.append(
+                f"المعلومة {index}:\n"
+                f"{result.content}\n"
+                f"نوع المعرفة: {result.knowledge_type}\n"
+                f"المصدر: {result.source}"
+            )
+
+        response = (
+            "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
+            + "\n\n".join(sections)
+            + "\n\n"
+            "حالة المعرفة: تم جمع عدة عناصر معرفية "
+            "مرتبطة بالسؤال، ويجب تحليلها معًا قبل بناء استنتاج."
         )
+
+        return response
 
     def _apply_scientific_policy(
         self,
         response: str,
         knowledge_type: str
-    ) -> str:
+    ):
 
         if knowledge_type == "fact":
             policy_note = (
