@@ -1,4 +1,5 @@
 import os
+import re
 
 from dataclasses import dataclass
 from threading import Lock
@@ -219,7 +220,10 @@ class KnowledgeBase:
         for old, new in replacements.items():
             text = text.replace(old, new)
 
-        punctuation = "،؛؟!.,:;()[]{}\"'"
+        punctuation = (
+            "،؛؟!.,:;()[]{}\"'`"
+            "«»“”‘’"
+        )
 
         for mark in punctuation:
             text = text.replace(mark, " ")
@@ -257,6 +261,16 @@ class KnowledgeBase:
 
         return " ".join(normalized_words)
 
+    def _tokenize(self, text: str):
+        normalized = self._normalize_arabic(text)
+
+        return set(
+            re.findall(
+                r"[a-z0-9\u0600-\u06ff]+",
+                normalized
+            )
+        )
+
     def search(self, query: str):
         normalized_query = self._normalize_arabic(query)
 
@@ -264,6 +278,7 @@ class KnowledgeBase:
             return []
 
         ignored_words = {
+            # Arabic
             "ما",
             "ماذا",
             "هي",
@@ -285,47 +300,123 @@ class KnowledgeBase:
             "الذي",
             "ماهي",
             "ماهو",
+
+            # English
+            "the",
+            "what",
+            "which",
+            "who",
+            "when",
+            "where",
+            "why",
+            "how",
+            "is",
+            "are",
+            "was",
+            "were",
+            "do",
+            "does",
+            "did",
+            "a",
+            "an",
+            "and",
+            "or",
+            "of",
+            "to",
+            "in",
+            "on",
+            "for",
+            "with",
+            "about",
+            "from",
+            "by",
+            "latest",
+            "current",
         }
 
-        words = [
+        query_tokens = self._tokenize(normalized_query)
+
+        words = {
             word
-            for word in normalized_query.split()
+            for word in query_tokens
             if len(word) > 2
             and word not in ignored_words
-        ]
+        }
+
+        if not words:
+            return []
 
         with self._lock:
             scored_results = []
 
             for item in self._items:
-                title = self._normalize_arabic(item.title)
-                content = self._normalize_arabic(item.content)
+                title_tokens = self._tokenize(
+                    item.title
+                )
+
+                content_tokens = self._tokenize(
+                    item.content
+                )
+
+                title_matches = (
+                    words.intersection(title_tokens)
+                )
+
+                content_matches = (
+                    words.intersection(content_tokens)
+                )
+
+                matched_words = (
+                    title_matches
+                    | content_matches
+                )
+
+                if not matched_words:
+                    continue
 
                 score = 0
-                matched_words = 0
 
-                if normalized_query in title:
-                    score += 20
+                # تطابق كامل للعبارة في العنوان
+                if normalized_query in self._normalize_arabic(
+                    item.title
+                ):
+                    score += 50
 
-                if normalized_query in content:
-                    score += 5
+                # تطابق كامل للعبارة في المحتوى
+                if normalized_query in self._normalize_arabic(
+                    item.content
+                ):
+                    score += 15
 
-                for word in words:
-                    if word in title:
-                        score += 10
-                        matched_words += 1
-                    elif word in content:
-                        score += 2
-                        matched_words += 1
+                # كلمات موجودة في العنوان
+                score += len(title_matches) * 10
 
-                if matched_words > 0:
-                    scored_results.append(
-                        (
-                            score,
-                            matched_words,
-                            item
-                        )
+                # كلمات موجودة في المحتوى
+                score += len(content_matches) * 2
+
+                total_query_words = len(words)
+                matched_count = len(matched_words)
+
+                # لا نعتبر نتيجة ضعيفة مرتبطة بالسؤال
+                if total_query_words >= 2:
+                    if matched_count < 2:
+                        continue
+
+                # إذا كانت النتيجة تعتمد على المحتوى فقط
+                # يجب أن يكون هناك تطابق كافٍ
+                if (
+                    not title_matches
+                    and len(content_matches) < 2
+                ):
+                    continue
+
+                scored_results.append(
+                    (
+                        score,
+                        matched_count,
+                        item
                     )
+                )
 
             scored_results.sort(
                 key=lambda result: (
@@ -382,4 +473,4 @@ knowledge.add(
     "وجود علاقة عامة في جميع الظروف.",
     "internal-scientific",
     "inference"
-                )
+)
