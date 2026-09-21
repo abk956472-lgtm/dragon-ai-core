@@ -1,4 +1,3 @@
-
 """
 DRAGON AI CORE
 Web Learning Engine
@@ -11,6 +10,7 @@ Web Learning Engine
 - تحديد المصدر.
 - تجهيز المحتوى لمحرك التعلّم الذاتي.
 - عدم اعتبار محتوى الإنترنت حقيقة مثبتة تلقائيًا.
+- منع الوصول إلى عناوين الشبكات الداخلية والمحلية.
 
 ملاحظة:
 هذا الملف لا يحفظ المعرفة مباشرة.
@@ -18,6 +18,8 @@ Web Learning Engine
 """
 
 from html.parser import HTMLParser
+from ipaddress import ip_address
+from socket import getaddrinfo
 from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -221,7 +223,8 @@ class WebLearningEngine:
         url: str
     ) -> dict:
         """
-        التحقق من أن الرابط HTTP/HTTPS.
+        التحقق من الرابط ومنع الوصول
+        إلى العناوين المحلية والخاصة.
         """
 
         if not url:
@@ -251,16 +254,174 @@ class WebLearningEngine:
                 ),
             }
 
-        if not parsed.netloc:
+        if not parsed.hostname:
             return {
                 "valid": False,
                 "reason": "URL host is required.",
             }
 
+        hostname = parsed.hostname.strip().lower()
+
+        if self._is_blocked_hostname(hostname):
+            return {
+                "valid": False,
+                "reason": (
+                    "Local and private network addresses "
+                    "are not allowed."
+                ),
+            }
+
+        address_check = self._validate_host_addresses(
+            hostname
+        )
+
+        if not address_check["valid"]:
+            return address_check
+
         return {
             "valid": True,
             "url": clean_url,
         }
+
+    # ==========================================================
+    # Hostname protection
+    # ==========================================================
+
+    def _is_blocked_hostname(
+        self,
+        hostname: str
+    ) -> bool:
+        """
+        منع أسماء المضيفين المحلية والخاصة المعروفة.
+        """
+
+        blocked_names = {
+            "localhost",
+            "localhost.localdomain",
+            "ip6-localhost",
+            "ip6-loopback",
+        }
+
+        if hostname in blocked_names:
+            return True
+
+        return hostname.endswith(
+            ".localhost"
+        )
+
+    # ==========================================================
+    # DNS / IP protection
+    # ==========================================================
+
+    def _validate_host_addresses(
+        self,
+        hostname: str
+    ) -> dict:
+        """
+        حل اسم النطاق والتحقق من أن جميع العناوين
+        الناتجة ليست محلية أو خاصة أو محجوزة.
+        """
+
+        try:
+            direct_ip = ip_address(
+                hostname
+            )
+
+            if self._is_private_address(
+                direct_ip
+            ):
+                return {
+                    "valid": False,
+                    "reason": (
+                        "Direct access to local, private, "
+                        "or reserved IP addresses is not allowed."
+                    ),
+                }
+
+            return {
+                "valid": True,
+                "reason": None,
+            }
+
+        except ValueError:
+            pass
+
+        try:
+            addresses = getaddrinfo(
+                hostname,
+                None
+            )
+        except Exception:
+            return {
+                "valid": False,
+                "reason": (
+                    "Unable to resolve the web host."
+                ),
+            }
+
+        if not addresses:
+            return {
+                "valid": False,
+                "reason": (
+                    "The web host has no resolved address."
+                ),
+            }
+
+        checked_addresses = set()
+
+        for address_info in addresses:
+            address = address_info[4][0]
+
+            if address in checked_addresses:
+                continue
+
+            checked_addresses.add(address)
+
+            try:
+                parsed_address = ip_address(
+                    address
+                )
+            except ValueError:
+                return {
+                    "valid": False,
+                    "reason": (
+                        "The resolved host address is invalid."
+                    ),
+                }
+
+            if self._is_private_address(
+                parsed_address
+            ):
+                return {
+                    "valid": False,
+                    "reason": (
+                        "The web host resolves to a local, "
+                        "private, or reserved network address."
+                    ),
+                }
+
+        return {
+            "valid": True,
+            "reason": None,
+        }
+
+    def _is_private_address(
+        self,
+        address
+    ) -> bool:
+        """
+        تحديد العناوين التي لا ينبغي لمحرك الويب
+        الوصول إليها.
+        """
+
+        return (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        )
 
     # ==========================================================
     # Web fetching
