@@ -1,4 +1,4 @@
-ممfrom dataclasses import dataclass
+from dataclasses import dataclass
 from threading import Lock
 
 
@@ -52,14 +52,34 @@ class KnowledgeBase:
         words = query.split()
 
         with self._lock:
+            scored_results = []
+
+            for item in self._items:
+                title = item.title.lower()
+                content = item.content.lower()
+
+                score = 0
+
+                for word in words:
+                    if word in title:
+                        score += 3
+
+                    if word in content:
+                        score += 1
+
+                if score > 0:
+                    scored_results.append(
+                        (score, item)
+                    )
+
+            scored_results.sort(
+                key=lambda result: result[0],
+                reverse=True
+            )
+
             return [
                 item
-                for item in self._items
-                if any(
-                    word in item.title.lower()
-                    or word in item.content.lower()
-                    for word in words
-                )
+                for score, item in scored_results
             ]
 
     def clear(self):
