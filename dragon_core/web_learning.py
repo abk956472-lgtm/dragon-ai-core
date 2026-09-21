@@ -45,23 +45,17 @@ class WebLearning:
         )
 
     def _prepare_search_query(self, query: str) -> str:
-        """
-        تنظيف سؤال المستخدم قبل إرساله إلى محرك البحث.
-        """
-
         query = str(query or "").strip()
 
         if not query:
             return ""
 
-        # إزالة علامات الاستفهام والرموز الزائدة
         query = re.sub(
             r"[؟?!،؛,:]+",
             " ",
             query
         )
 
-        # كلمات ربط شائعة لا تضيف قيمة كبيرة للبحث
         stop_phrases = [
             "ما هو",
             "ما هي",
@@ -103,17 +97,12 @@ class WebLearning:
             cleaned
         ).strip()
 
-        # إذا أصبح السؤال فارغًا نعيد السؤال الأصلي
         if not cleaned:
             return query
 
         return cleaned
 
     def _normalize_search_url(self, url: str) -> str:
-        """
-        تحويل روابط Bing الوسيطة إلى الرابط الحقيقي.
-        """
-
         if not url:
             return ""
 
@@ -122,13 +111,11 @@ class WebLearning:
 
         parsed = urllib.parse.urlparse(url)
 
-        # إذا كان الرابط رابط Bing redirect
         if "bing.com" in parsed.netloc.lower():
             query = urllib.parse.parse_qs(
                 parsed.query
             )
 
-            # الطريقة الأولى
             for key in ("u", "url", "r"):
                 values = query.get(key)
 
@@ -148,10 +135,6 @@ class WebLearning:
         return url
 
     def _decode_bing_url(self, value: str) -> str:
-        """
-        محاولة فك بعض صيغ روابط Bing المختصرة.
-        """
-
         if not value:
             return ""
 
@@ -160,7 +143,6 @@ class WebLearning:
         if value.startswith("http"):
             return value
 
-        # صيغة a1 + Base64
         if value.startswith("a1"):
             encoded = value[2:]
 
@@ -190,10 +172,6 @@ class WebLearning:
         return ""
 
     def _valid_url(self, url: str) -> bool:
-        """
-        التحقق من أن الرابط صالح للتحميل.
-        """
-
         if not url:
             return False
 
@@ -209,23 +187,17 @@ class WebLearning:
             return False
 
     def _clean_text(self, text: str) -> str:
-        """
-        تنظيف النص المستخرج من HTML/XML.
-        """
-
         if not text:
             return ""
 
         text = html.unescape(text)
 
-        # إزالة الوسوم
         text = re.sub(
             r"<[^>]+>",
             " ",
             text
         )
 
-        # إزالة المسافات الزائدة
         text = re.sub(
             r"\s+",
             " ",
@@ -238,10 +210,6 @@ class WebLearning:
         self,
         xml_text: str
     ):
-        """
-        تحليل نتائج Bing RSS.
-        """
-
         results = []
 
         if not xml_text:
@@ -323,14 +291,10 @@ class WebLearning:
         self,
         text: str
     ) -> str:
-        """
-        استخراج نص بسيط من صفحة HTML.
-        """
 
         if not text:
             return ""
 
-        # حذف script
         text = re.sub(
             r"<script\b[^>]*>.*?</script>",
             " ",
@@ -338,7 +302,6 @@ class WebLearning:
             flags=re.IGNORECASE | re.DOTALL,
         )
 
-        # حذف style
         text = re.sub(
             r"<style\b[^>]*>.*?</style>",
             " ",
@@ -346,7 +309,6 @@ class WebLearning:
             flags=re.IGNORECASE | re.DOTALL,
         )
 
-        # حذف noscript
         text = re.sub(
             r"<noscript\b[^>]*>.*?</noscript>",
             " ",
@@ -354,7 +316,6 @@ class WebLearning:
             flags=re.IGNORECASE | re.DOTALL,
         )
 
-        # حذف جميع HTML tags
         text = re.sub(
             r"<[^>]+>",
             " ",
@@ -382,9 +343,6 @@ class WebLearning:
         self,
         url: str
     ) -> str:
-        """
-        تحميل محتوى الصفحة.
-        """
 
         try:
             response = self.session.get(
@@ -424,9 +382,6 @@ class WebLearning:
         self,
         query: str
     ):
-        """
-        البحث التلقائي في الويب.
-        """
 
         search_query = (
             self._prepare_search_query(
@@ -466,21 +421,6 @@ class WebLearning:
             response.raise_for_status()
 
             xml_text = response.text
-
-            # TEMPORARY DEBUG
-            return {
-                "status": "debug",
-                "search_query": search_query,
-                "search_url": response.url,
-                "content_type": response.headers.get(
-                    "Content-Type",
-                    ""
-                ),
-                "response_preview": xml_text[:3000],
-            }
-
-            # لن نصل إلى هنا مؤقتًا.
-            # بعد انتهاء التشخيص نحذف كتلة debug.
 
             results = self._parse_bing_rss(
                 xml_text
@@ -573,9 +513,6 @@ class WebLearning:
         self,
         url: str
     ):
-        """
-        تعلم مباشر من رابط محدد.
-        """
 
         if not self._valid_url(url):
             return {
