@@ -61,6 +61,15 @@ class DragonEngine:
                 message
             )
 
+        # ==============================================
+        # Natural Learning
+        #
+        # تعلم أن ...
+        # ==============================================
+
+        if message.startswith("تعلم أن "):
+            return self._process_natural_learning(message)
+
         knowledge_results = knowledge.search(message)
 
         previous_memories = memory.search_scientific(message)
@@ -239,6 +248,62 @@ class DragonEngine:
             ),
             "learning_engine": "web_learning",
             "learning": result,
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
+    # ==========================================================
+    # Natural Learning
+    # ==========================================================
+
+    def _process_natural_learning(
+        self,
+        message: str
+    ) -> dict:
+        content = message[
+            len("تعلم أن "):
+        ].strip()
+
+        if not content:
+            return {
+                "status": "error",
+                "message": (
+                    "لم تحدد المعلومة التي تريد أن أتعلمها."
+                )
+            }
+
+        result = knowledge.learn(
+            title="معلومة متعلمة",
+            content=content,
+            source="user-natural-learning",
+            knowledge_type="fact"
+        )
+
+        if result["status"] == "learned":
+            response = (
+                "تم تعلم المعلومة وحفظها في قاعدة المعرفة."
+            )
+
+        elif result["status"] == "duplicate":
+            response = (
+                "هذه المعلومة موجودة بالفعل "
+                "في قاعدة المعرفة."
+            )
+
+        else:
+            response = (
+                "لم يتم حفظ المعلومة."
+            )
+
+        return {
+            "status": result["status"],
+            "response": response,
+            "learning": result,
+            "learning_engine": "natural_learning",
             "scientific_policy_version":
                 scientific_policy_version(),
             "scientific_rules_active":
