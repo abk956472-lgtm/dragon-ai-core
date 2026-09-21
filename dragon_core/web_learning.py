@@ -5,8 +5,9 @@ Web Learning Engine
 يدعم:
 1. التعلم من رابط يحدده المستخدم.
 2. البحث التلقائي في الويب من السؤال.
-3. استخراج النص من صفحات الويب.
-4. التحقق الأساسي من عناوين URL لمنع الوصول إلى
+3. استخدام Bing كمحرك البحث التلقائي.
+4. استخراج النص من صفحات الويب.
+5. التحقق الأساسي من عناوين URL لمنع الوصول إلى
    العناوين المحلية والخاصة.
 """
 
@@ -15,8 +16,6 @@ from ipaddress import ip_address
 from socket import gethostbyname
 from urllib.error import HTTPError, URLError
 from urllib.parse import (
-    parse_qs,
-    unquote,
     urlencode,
     urlparse,
 )
@@ -36,7 +35,7 @@ MAX_SEARCH_RESULTS = 5
 MAX_SEARCH_SOURCES_TO_FETCH = 2
 MAX_SEARCH_CONTENT_CHARS = 12_000
 
-SEARCH_ENGINE_URL = "https://html.duckduckgo.com/html/"
+SEARCH_ENGINE_URL = "https://www.bing.com/search"
 
 USER_AGENT = (
     "Mozilla/5.0 "
@@ -60,6 +59,7 @@ class WebTextExtractor(HTMLParser):
 
     def __init__(self):
         super().__init__()
+
         self.parts = []
         self.skip_depth = 0
 
@@ -93,7 +93,7 @@ class WebTextExtractor(HTMLParser):
 
 class WebSearchExtractor(HTMLParser):
     """
-    استخراج نتائج البحث من صفحة DuckDuckGo HTML.
+    استخراج نتائج البحث من صفحة Bing HTML.
     """
 
     def __init__(self):
@@ -101,13 +101,16 @@ class WebSearchExtractor(HTMLParser):
 
         self.results = []
 
+        self.in_result = False
+        self.in_title = False
+        self.in_snippet = False
+
         self.current_title = ""
         self.current_url = ""
         self.current_snippet = ""
 
-        self.in_result = False
-        self.in_title = False
-        self.in_snippet = False
+        self.title_depth = 0
+        self.snippet_depth = 0
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -124,58 +127,99 @@ class WebSearchExtractor(HTMLParser):
         )
 
         # --------------------------------------------------
-        # بداية نتيجة بحث جديدة
+        # بداية نتيجة Bing جديدة
         # --------------------------------------------------
 
         if (
-            tag == "a"
-            and "result__a" in class_names
+            tag == "li"
+            and "b_algo" in class_names
         ):
-
-            # حفظ النتيجة السابقة أولًا
             if self.in_result:
                 self.close_result()
 
             self.in_result = True
-            self.in_title = True
+
+            self.in_title = False
             self.in_snippet = False
 
             self.current_title = ""
             self.current_url = ""
             self.current_snippet = ""
 
-            self.current_url = attrs_dict.get(
+            return
+
+        if not self.in_result:
+            return
+
+        # --------------------------------------------------
+        # عنوان النتيجة
+        # --------------------------------------------------
+
+        if (
+            tag == "h2"
+        ):
+            self.in_title = True
+            self.title_depth = 1
+
+            return
+
+        if (
+            self.in_title
+            and tag == "a"
+        ):
+            href = attrs_dict.get(
                 "href",
                 ""
             ).strip()
 
+            if href:
+                self.current_url = href
+
             return
 
         # --------------------------------------------------
-        # بداية النص المختصر
+        # الوصف المختصر
         # --------------------------------------------------
 
         if (
-            tag in {"a", "div"}
-            and "result__snippet" in class_names
-            and self.in_result
+            tag == "p"
+            and not self.in_title
         ):
             self.in_snippet = True
+            self.snippet_depth = 1
+
+            return
+
+        # --------------------------------------------------
+        # تتبع عمق العنوان والوصف
+        # --------------------------------------------------
+
+        if self.in_title:
+            self.title_depth += 1
+
+        elif self.in_snippet:
+            self.snippet_depth += 1
 
     def handle_endtag(self, tag):
         tag = tag.lower()
 
-        if (
-            tag == "a"
-            and self.in_title
-        ):
-            self.in_title = False
+        if self.in_title:
 
-        if (
-            tag in {"a", "div"}
-            and self.in_snippet
-        ):
-            self.in_snippet = False
+            if tag == "h2":
+                self.in_title = False
+                self.title_depth = 0
+
+            elif self.title_depth > 0:
+                self.title_depth -= 1
+
+        if self.in_snippet:
+
+            if tag == "p":
+                self.in_snippet = False
+                self.snippet_depth = 0
+
+            elif self.snippet_depth > 0:
+                self.snippet_depth -= 1
 
     def handle_data(self, data):
         text = data.strip()
@@ -224,12 +268,14 @@ class WebSearchExtractor(HTMLParser):
         self.in_title = False
         self.in_snippet = False
 
+        self.title_depth = 0
+        self.snippet_depth = 0
+
         self.current_title = ""
         self.current_url = ""
         self.current_snippet = ""
 
     def get_results(self):
-        # حفظ آخر نتيجة
         if self.in_result:
             self.close_result()
 
@@ -661,31 +707,6 @@ class WebLearningEngine:
         if url.startswith("//"):
             url = "https:" + url
 
-        parsed = urlparse(
-            url
-        )
-
-        query = parse_qs(
-            parsed.query
-        )
-
-        if (
-            parsed.hostname
-            and parsed.hostname.endswith(
-                "duckduckgo.com"
-            )
-            and "uddg" in query
-        ):
-            target = query.get(
-                "uddg",
-                [""]
-            )[0]
-
-            if target:
-                return unquote(
-                    target
-                )
-
         return url
 
     # ---------------------------------------------------------
@@ -722,7 +743,10 @@ class WebLearningEngine:
             search_url,
             headers={
                 "User-Agent": USER_AGENT,
-                "Accept": "text/html",
+                "Accept": (
+                    "text/html,"
+                    "application/xhtml+xml"
+                ),
             },
         )
 
@@ -775,6 +799,10 @@ class WebLearningEngine:
                     f"{exc}"
                 ),
             }
+
+        # -----------------------------------------------------
+        # استخراج نتائج Bing
+        # -----------------------------------------------------
 
         parser = WebSearchExtractor()
 
@@ -854,6 +882,10 @@ class WebLearningEngine:
                 "knowledge_saved": False,
                 "evidence_status": "unverified",
             }
+
+        # -----------------------------------------------------
+        # جلب محتوى أول المصادر
+        # -----------------------------------------------------
 
         final_results = []
 
