@@ -7,6 +7,7 @@ class KnowledgeItem:
     title: str
     content: str
     source: str = "internal"
+    knowledge_type: str = "fact"
 
 
 class KnowledgeBase:
@@ -14,11 +15,29 @@ class KnowledgeBase:
         self._items = []
         self._lock = Lock()
 
-    def add(self, title: str, content: str, source: str = "internal"):
+    def add(
+        self,
+        title: str,
+        content: str,
+        source: str = "internal",
+        knowledge_type: str = "fact"
+    ):
+        allowed_types = {
+            "fact",
+            "inference",
+            "hypothesis"
+        }
+
+        if knowledge_type not in allowed_types:
+            raise ValueError(
+                "knowledge_type must be fact, inference, or hypothesis."
+            )
+
         item = KnowledgeItem(
             title=title,
             content=content,
-            source=source
+            source=source,
+            knowledge_type=knowledge_type
         )
 
         with self._lock:
@@ -57,5 +76,6 @@ knowledge.add(
     "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
     "تختلف الخلايا في بنيتها ووظائفها، وتوجد خلايا بدائية النوى "
     "وخلايا حقيقية النوى.",
-    "internal-scientific"
+    "internal-scientific",
+    "fact"
 )
