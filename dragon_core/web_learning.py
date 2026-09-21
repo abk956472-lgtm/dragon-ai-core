@@ -1,534 +1,757 @@
-from .memory import memory
-from .knowledge import knowledge
-from .security import security
-from .self_learning import self_learning
-from .web_learning import web_learning
+"""
+DRAGON AI CORE
+Web Learning Engine
 
-from policies.scientific_policy import (
-    get_scientific_rules,
-    evaluate_evidence,
-    scientific_policy_version,
+يدعم:
+1. التعلم من رابط يحدده المستخدم.
+2. البحث التلقائي في الويب من السؤال.
+3. استخراج النص من صفحات الويب.
+4. التحقق الأساسي من عناوين URL لمنع الوصول إلى
+   العناوين المحلية والخاصة.
+"""
+
+from html.parser import HTMLParser
+from ipaddress import ip_address
+from socket import gethostbyname
+from urllib.error import HTTPError, URLError
+from urllib.parse import (
+    parse_qs,
+    unquote,
+    urlencode,
+    urlparse,
+)
+from urllib.request import (
+    Request,
+    urlopen,
 )
 
 
-class DragonEngine:
+ALLOWED_SCHEMES = {"http", "https"}
+
+REQUEST_TIMEOUT = 15
+MAX_DOWNLOAD_BYTES = 2_000_000
+MAX_CONTENT_CHARS = 50_000
+
+MAX_SEARCH_RESULTS = 5
+MAX_SEARCH_SOURCES_TO_FETCH = 2
+MAX_SEARCH_CONTENT_CHARS = 12_000
+
+SEARCH_ENGINE_URL = "https://html.duckduckgo.com/html/"
+
+USER_AGENT = (
+    "Mozilla/5.0 "
+    "(compatible; DRAGON-AI-CORE/1.0; +https://github.com/)"
+)
+
+
+class WebTextExtractor(HTMLParser):
+    """
+    استخراج النص الظاهر من HTML.
+    """
+
+    SKIP_TAGS = {
+        "script",
+        "style",
+        "noscript",
+        "svg",
+        "canvas",
+        "iframe",
+    }
+
     def __init__(self):
-        self.name = "DRAGON AI CORE"
-        self.scientific_rules = get_scientific_rules()
+        super().__init__()
+        self.parts = []
+        self.skip_depth = 0
 
-    def process(self, message: str) -> dict:
-        message = message.strip()
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
 
-        if not message:
+        if tag in self.SKIP_TAGS:
+            self.skip_depth += 1
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+
+        if tag in self.SKIP_TAGS and self.skip_depth > 0:
+            self.skip_depth -= 1
+
+    def handle_data(self, data):
+        if self.skip_depth > 0:
+            return
+
+        text = data.strip()
+
+        if text:
+            self.parts.append(text)
+
+    def get_text(self):
+        return " ".join(self.parts)
+
+
+class WebSearchExtractor(HTMLParser):
+    """
+    استخراج نتائج البحث من صفحة DuckDuckGo HTML.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        self.results = []
+
+        self.current_title = ""
+        self.current_url = ""
+        self.current_snippet = ""
+
+        self.in_result = False
+        self.in_title = False
+        self.in_snippet = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+
+        classes = attrs_dict.get("class", "")
+
+        if tag == "a" and "result__a" in classes:
+            self.in_result = True
+            self.in_title = True
+
+            self.current_title = ""
+            self.current_url = ""
+            self.current_snippet = ""
+
+            href = attrs_dict.get("href", "")
+            self.current_url = href
+
+        elif tag in {"a", "div"} and "result__snippet" in classes:
+            if self.in_result:
+                self.in_snippet = True
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self.in_title:
+            self.in_title = False
+
+        if tag == "div" and self.in_snippet:
+            self.in_snippet = False
+
+    def handle_data(self, data):
+        text = data.strip()
+
+        if not text:
+            return
+
+        if self.in_title:
+            self.current_title += " " + text
+
+        elif self.in_snippet:
+            self.current_snippet += " " + text
+
+    def handle_startendtag(self, tag, attrs):
+        pass
+
+    def close_result(self):
+        title = " ".join(self.current_title.split())
+        snippet = " ".join(self.current_snippet.split())
+        url = self.current_url.strip()
+
+        if title and url:
+            self.results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                }
+            )
+
+        self.in_result = False
+        self.in_title = False
+        self.in_snippet = False
+
+    def get_results(self):
+        if self.in_result:
+            self.close_result()
+
+        return self.results
+
+
+class WebLearningEngine:
+    def __init__(self):
+        self.name = "Web Learning Engine"
+
+    # ---------------------------------------------------------
+    # URL VALIDATION
+    # ---------------------------------------------------------
+
+    def _validate_url(self, url: str):
+        if not url:
+            return False, "الرابط فارغ."
+
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False, "تعذر تحليل الرابط."
+
+        if parsed.scheme.lower() not in ALLOWED_SCHEMES:
+            return False, "نوع الرابط غير مسموح."
+
+        if not parsed.hostname:
+            return False, "الرابط لا يحتوي على اسم نطاق صالح."
+
+        hostname = parsed.hostname.lower().strip()
+
+        blocked_hosts = {
+            "localhost",
+            "localhost.localdomain",
+        }
+
+        if hostname in blocked_hosts:
+            return False, "الوصول إلى العنوان المحلي غير مسموح."
+
+        try:
+            resolved_ip = gethostbyname(hostname)
+            ip = ip_address(resolved_ip)
+
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return False, "الوصول إلى عنوان شبكة خاص أو محلي غير مسموح."
+
+        except Exception:
+            return False, "تعذر التحقق من عنوان النطاق."
+
+        return True, None
+
+    # ---------------------------------------------------------
+    # FETCH URL
+    # ---------------------------------------------------------
+
+    def _fetch_url(self, url: str):
+        valid, error = self._validate_url(url)
+
+        if not valid:
             return {
                 "status": "error",
-                "message": "Empty message."
+                "message": error,
             }
 
-        memory.add("user", message)
-
-        if message.startswith("تعلم |"):
-            return self._process_learning_command(message)
-
-        if message.startswith("تعلم ذاتي |"):
-            return self._process_self_learning_command(message)
-
-        if message.startswith("تعلم من الويب |"):
-            return self._process_web_learning_command(message)
-
-        if message.startswith("تعلم أن "):
-            return self._process_natural_learning(message)
-
-        knowledge_results = knowledge.search(message)
-        previous_memories = memory.search_scientific(message)
-
-        # إذا لم توجد معرفة كافية، يبحث DRAGON تلقائياً في الويب
-        if not knowledge_results:
-            web_result = self._process_automatic_web_search(
-                message,
-                previous_memories
-            )
-
-            if web_result is not None:
-                return web_result
-
-        response, raw_response_for_memory, evidence_evaluation = (
-            self._generate_response(
-                message,
-                knowledge_results,
-                previous_memories
-            )
-        )
-
-        if raw_response_for_memory.strip():
-            memory.add(
-                "assistant",
-                raw_response_for_memory,
-                memory_type="scientific",
-                evidence_status=evidence_evaluation.get(
-                    "evidence_status",
-                    "unknown"
+        request = Request(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": (
+                    "text/html,application/xhtml+xml,"
+                    "application/xml;q=0.9,*/*;q=0.8"
                 ),
-                confidence=evidence_evaluation.get(
-                    "confidence",
-                    "low"
-                )
-            )
+            },
+        )
 
-        return {
-            "status": "success",
-            "response": response,
-            "knowledge_matches": len(knowledge_results),
-            "scientific_memory_matches": len(previous_memories),
-            "scientific_policy_version": scientific_policy_version(),
-            "scientific_rules_active": len(self.scientific_rules),
-            "evidence_status": evidence_evaluation.get(
-                "evidence_status"
-            ),
-            "evidence_confidence": evidence_evaluation.get(
-                "confidence"
-            ),
-            "security_confirmation_required": (
-                security.requires_confirmation()
-            )
-        }
+        try:
+            with urlopen(
+                request,
+                timeout=REQUEST_TIMEOUT
+            ) as response:
 
-    def _process_automatic_web_search(
-        self,
-        question: str,
-        previous_memories
-    ):
-        result = web_learning.search_web(question)
+                content_type = response.headers.get(
+                    "Content-Type",
+                    ""
+                ).lower()
 
-        if not result:
-            return None
-
-        if result.get("status") != "success":
-            return None
-
-        results = result.get("results", [])
-
-        if not results:
-            return None
-
-        saved_count = 0
-        response_sections = []
-
-        for index, item in enumerate(results, start=1):
-            title = str(item.get("title", "")).strip()
-            url = str(item.get("url", "")).strip()
-            snippet = str(item.get("snippet", "")).strip()
-            content = str(item.get("content", "")).strip()
-
-            # نستخدم المحتوى الكامل عندما يكون متاحاً،
-            # وإلا نستخدم ملخص نتيجة البحث.
-            answer_text = content or snippet
-
-            if not answer_text:
-                continue
-
-            response_sections.append(
-                f"المصدر {index}:\n"
-                f"{title}\n"
-                f"{answer_text}\n"
-                f"الرابط: {url}"
-            )
-
-            # حفظ نتائج الويب كمعرفة غير متحقق منها.
-            # لا يتم تقديمها على أنها حقيقة علمية مؤكدة.
-            if title and url:
-                save_result = knowledge.learn(
-                    title=title,
-                    content=answer_text,
-                    source=url,
-                    knowledge_type="web_unverified"
-                )
-
-                if save_result.get("status") in (
-                    "learned",
-                    "duplicate"
+                if (
+                    "text/html" not in content_type
+                    and "application/xhtml+xml" not in content_type
+                    and "text/plain" not in content_type
                 ):
-                    saved_count += 1
+                    return {
+                        "status": "error",
+                        "message": (
+                            "نوع المحتوى غير مدعوم."
+                        ),
+                    }
 
-        if not response_sections:
-            return None
+                data = response.read(
+                    MAX_DOWNLOAD_BYTES + 1
+                )
 
-        final_response = (
-            "بحثت تلقائياً في الويب لأن قاعدة المعرفة الحالية "
-            "لم تحتوي على إجابة كافية.\n\n"
-            + "\n\n".join(response_sections)
-            + "\n\n"
-            "حالة الأدلة: غير متحقق منها."
-        )
+                if len(data) > MAX_DOWNLOAD_BYTES:
+                    return {
+                        "status": "error",
+                        "message": (
+                            "حجم الصفحة أكبر من الحد المسموح."
+                        ),
+                    }
 
-        if previous_memories:
-            final_response += (
-                "\n\n"
-                + self._build_memory_response(previous_memories)
+                charset = self._detect_charset(
+                    content_type,
+                    data
+                )
+
+                try:
+                    text = data.decode(
+                        charset,
+                        errors="replace"
+                    )
+                except Exception:
+                    text = data.decode(
+                        "utf-8",
+                        errors="replace"
+                    )
+
+                return {
+                    "status": "success",
+                    "url": response.geturl(),
+                    "content_type": content_type,
+                    "text": text,
+                }
+
+        except HTTPError as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"HTTP error: {exc.code}"
+                ),
+            }
+
+        except URLError as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"تعذر الوصول إلى الرابط: {exc.reason}"
+                ),
+            }
+
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"حدث خطأ أثناء تحميل الصفحة: {exc}"
+                ),
+            }
+
+    # ---------------------------------------------------------
+    # CHARACTER ENCODING
+    # ---------------------------------------------------------
+
+    def _detect_charset(
+        self,
+        content_type: str,
+        data: bytes
+    ):
+        content_type_lower = content_type.lower()
+
+        marker = "charset="
+
+        if marker in content_type_lower:
+            charset = (
+                content_type_lower
+                .split(marker, 1)[1]
+                .split(";", 1)[0]
+                .strip()
+                .strip('"')
+                .strip("'")
             )
 
-        memory.add(
-            "assistant",
-            final_response,
-            memory_type="scientific",
-            evidence_status="web_unverified",
-            confidence="low"
+            if charset:
+                return charset
+
+        sample = data[:10_000].decode(
+            "ascii",
+            errors="ignore"
         )
 
-        return {
-            "status": "success",
-            "response": final_response,
-            "knowledge_matches": 0,
-            "scientific_memory_matches": len(previous_memories),
-            "web_search_used": True,
-            "web_results": len(response_sections),
-            "knowledge_saved": saved_count,
-            "evidence_status": "web_unverified",
-            "evidence_confidence": "low",
-            "scientific_policy_version": scientific_policy_version(),
-            "scientific_rules_active": len(self.scientific_rules),
-            "security_confirmation_required": (
-                security.requires_confirmation()
+        lower_sample = sample.lower()
+
+        marker = 'charset="'
+
+        if marker in lower_sample:
+            value = lower_sample.split(
+                marker,
+                1
+            )[1].split(
+                '"',
+                1
+            )[0]
+
+            if value:
+                return value
+
+        marker = "charset="
+
+        if marker in lower_sample:
+            value = lower_sample.split(
+                marker,
+                1
+            )[1].split(
+                ">",
+                1
+            )[0].split(
+                ";",
+                1
+            )[0].split(
+                '"',
+                1
+            )[0].strip()
+
+            if value:
+                return value
+
+        return "utf-8"
+
+    # ---------------------------------------------------------
+    # HTML EXTRACTION
+    # ---------------------------------------------------------
+
+    def _extract_text(self, html: str):
+        extractor = WebTextExtractor()
+
+        try:
+            extractor.feed(html)
+            extractor.close()
+
+            text = extractor.get_text()
+
+        except Exception:
+            text = html
+
+        return text
+
+    # ---------------------------------------------------------
+    # CLEAN CONTENT
+    # ---------------------------------------------------------
+
+    def _clean_content(
+        self,
+        content: str,
+        max_chars: int = MAX_CONTENT_CHARS
+    ):
+        lines = []
+
+        for line in content.splitlines():
+            cleaned = " ".join(line.split())
+
+            if cleaned:
+                lines.append(cleaned)
+
+        result = " ".join(lines)
+
+        if len(result) > max_chars:
+            result = result[:max_chars]
+
+        return result.strip()
+
+    # ---------------------------------------------------------
+    # PREPARE SOURCE
+    # ---------------------------------------------------------
+
+    def prepare_source(
+        self,
+        url: str,
+        max_chars: int = MAX_CONTENT_CHARS
+    ):
+        fetched = self._fetch_url(url)
+
+        if fetched.get("status") != "success":
+            return fetched
+
+        raw_text = fetched.get("text", "")
+
+        content_type = fetched.get(
+            "content_type",
+            ""
+        ).lower()
+
+        if (
+            "text/html" in content_type
+            or "application/xhtml+xml" in content_type
+        ):
+            extracted = self._extract_text(
+                raw_text
             )
-        }
+        else:
+            extracted = raw_text
 
-    def _process_learning_command(self, message: str) -> dict:
-        parts = [part.strip() for part in message.split("|")]
-
-        if len(parts) != 5:
-            return {
-                "status": "error",
-                "message": (
-                    "صيغة التعلم غير صحيحة. استخدم: "
-                    "تعلم | العنوان | المحتوى | المصدر | "
-                    "fact/inference/hypothesis"
-                )
-            }
-
-        _, title, content, source, knowledge_type = parts
-
-        result = knowledge.learn(
-            title=title,
-            content=content,
-            source=source,
-            knowledge_type=knowledge_type
+        content = self._clean_content(
+            extracted,
+            max_chars=max_chars
         )
-
-        return self._build_command_response(
-            result,
-            "manual_learning"
-        )
-
-    def _process_self_learning_command(self, message: str) -> dict:
-        parts = [part.strip() for part in message.split("|")]
-
-        if len(parts) != 5:
-            return {
-                "status": "error",
-                "message": (
-                    "صيغة التعلم الذاتي غير صحيحة. استخدم: "
-                    "تعلم ذاتي | العنوان | المحتوى | المصدر | "
-                    "fact/inference/hypothesis"
-                )
-            }
-
-        _, title, content, source, knowledge_type = parts
-
-        result = self_learning.learn(
-            title=title,
-            content=content,
-            source=source,
-            knowledge_type=knowledge_type
-        )
-
-        return self._build_command_response(
-            result,
-            "self_learning"
-        )
-
-    def _process_web_learning_command(self, message: str) -> dict:
-        parts = [part.strip() for part in message.split("|")]
-
-        if len(parts) != 4:
-            return {
-                "status": "error",
-                "message": (
-                    "صيغة التعلم من الويب غير صحيحة. استخدم: "
-                    "تعلم من الويب | الرابط | العنوان | "
-                    "fact/inference/hypothesis"
-                )
-            }
-
-        _, url, title, knowledge_type = parts
-
-        result = web_learning.learn_from_url(
-            url=url,
-            title=title,
-            knowledge_type=knowledge_type,
-            confidence="low"
-        )
-
-        return self._build_command_response(
-            result,
-            "web_learning"
-        )
-
-    def _process_natural_learning(self, message: str) -> dict:
-        content = message[len("تعلم أن "):].strip()
 
         if not content:
             return {
                 "status": "error",
-                "message": "لم تحدد المعلومة التي تريد أن أتعلمها."
+                "message": (
+                    "لم يتم العثور على نص قابل للاستخراج."
+                ),
+                "url": fetched.get("url", url),
             }
 
-        result = knowledge.learn(
-            title="معلومة متعلمة",
-            content=content,
-            source="user-natural-learning",
-            knowledge_type="fact"
-        )
-
-        status = result.get("status")
-
-        responses = {
-            "learned": "تم تعلم المعلومة وحفظها في قاعدة المعرفة.",
-            "duplicate": (
-                "هذه المعلومة موجودة بالفعل في قاعدة المعرفة."
-            )
-        }
-
-        response_msg = responses.get(
-            status,
-            "لم يتم حفظ المعلومة."
-        )
-
-        res = self._build_command_response(
-            result,
-            "natural_learning"
-        )
-
-        res["response"] = response_msg
-
-        return res
-
-    def _build_command_response(
-        self,
-        result: dict,
-        engine_name: str
-    ) -> dict:
         return {
-            "status": result.get("status", "unknown"),
-            "learning_engine": engine_name,
-            "learning": result,
-            "scientific_policy_version": scientific_policy_version(),
-            "scientific_rules_active": len(self.scientific_rules),
-            "security_confirmation_required": (
-                security.requires_confirmation()
-            )
+            "status": "success",
+            "url": fetched.get("url", url),
+            "content": content,
         }
 
-    def _generate_response(
+    # ---------------------------------------------------------
+    # LEARN FROM URL
+    # ---------------------------------------------------------
+
+    def learn_from_url(
         self,
-        message,
-        knowledge_results,
-        previous_memories
+        url: str,
+        title: str,
+        knowledge_type: str = "fact",
+        confidence: str = "low"
     ):
-        if not knowledge_results:
-            if previous_memories:
-                mem_resp = self._build_memory_response(
-                    previous_memories
-                )
+        source = self.prepare_source(url)
 
-                eval_data = {
-                    "evidence_status": "memory_based",
-                    "confidence": "low"
-                }
-
-                return mem_resp, mem_resp, eval_data
-
-            fallback_resp = (
-                "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
-                "في قاعدة المعرفة."
-            )
-
-            eval_data = {
-                "evidence_status": "insufficient",
-                "confidence": "low"
+        if source.get("status") != "success":
+            return {
+                "status": "error",
+                "message": source.get(
+                    "message",
+                    "فشل استخراج محتوى الرابط."
+                ),
             }
 
-            return fallback_resp, fallback_resp, eval_data
-
-        if len(knowledge_results) == 1:
-            result = knowledge_results[0]
-
-            base_response = (
-                f"{result.content}\n"
-                f"نوع المعرفة: {result.knowledge_type}\n"
-                f"المصدر: {result.source}"
-            )
-
-            raw_response = base_response
-
-            base_response = self._apply_scientific_policy(
-                base_response,
-                result.knowledge_type
-            )
-
-            evidence_evaluation = evaluate_evidence(
-                facts_count=(
-                    1 if result.knowledge_type == "fact" else 0
-                ),
-                inference_count=(
-                    1
-                    if result.knowledge_type == "inference"
-                    else 0
-                ),
-                hypothesis_count=(
-                    1
-                    if result.knowledge_type == "hypothesis"
-                    else 0
-                )
-            )
-
-            final_response = base_response
-
-            if previous_memories:
-                final_response += (
-                    "\n\n"
-                    + self._build_memory_response(
-                        previous_memories
-                    )
-                )
-
-            return (
-                final_response,
-                raw_response,
-                evidence_evaluation
-            )
-
-        sections = []
-
-        facts_count = 0
-        inference_count = 0
-        hypothesis_count = 0
-
-        for index, result in enumerate(
-            knowledge_results,
-            start=1
-        ):
-            if result.knowledge_type == "fact":
-                facts_count += 1
-
-            elif result.knowledge_type == "inference":
-                inference_count += 1
-
-            elif result.knowledge_type == "hypothesis":
-                hypothesis_count += 1
-
-            sections.append(
-                f"المعلومة {index}:\n"
-                f"{result.content}\n"
-                f"نوع المعرفة: {result.knowledge_type}\n"
-                f"المصدر: {result.source}"
-            )
-
-        evidence_evaluation = evaluate_evidence(
-            facts_count=facts_count,
-            inference_count=inference_count,
-            hypothesis_count=hypothesis_count
+        content = source.get(
+            "content",
+            ""
         )
 
-        raw_response = (
-            "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
-            + "\n\n".join(sections)
-        )
+        return {
+            "status": "prepared",
+            "title": title,
+            "content": content,
+            "source": source.get(
+                "url",
+                url
+            ),
+            "knowledge_type": knowledge_type,
+            "confidence": confidence,
+        }
 
-        final_response = (
-            raw_response
-            + "\n\n"
-            + self._build_scientific_assessment(
-                evidence_evaluation
-            )
-        )
+    # ---------------------------------------------------------
+    # NORMALIZE SEARCH URL
+    # ---------------------------------------------------------
 
-        if previous_memories:
-            final_response += (
-                "\n\n"
-                + self._build_memory_response(
-                    previous_memories
-                )
-            )
-
-        return (
-            final_response,
-            raw_response,
-            evidence_evaluation
-        )
-
-    def _build_memory_response(
+    def _normalize_search_url(
         self,
-        previous_memories
-    ) -> str:
-        if not previous_memories:
+        url: str
+    ):
+        url = url.strip()
+
+        if not url:
             return ""
 
-        latest_memory = previous_memories[-1]
+        if url.startswith("//"):
+            url = "https:" + url
 
-        return (
-            "من الذاكرة العلمية السابقة:\n"
-            f"{latest_memory.content}\n"
-            "حالة الأدلة السابقة: "
-            f"{latest_memory.evidence_status or 'غير محددة'}\n"
-            "درجة الثقة السابقة: "
-            f"{latest_memory.confidence or 'غير محددة'}"
+        parsed = urlparse(url)
+
+        query = parse_qs(
+            parsed.query
         )
 
-    def _build_scientific_assessment(
-        self,
-        evidence_evaluation
-    ) -> str:
-        return (
-            "التقييم العلمي:\n"
-            f"حالة الأدلة: "
-            f"{evidence_evaluation.get('evidence_status')}\n"
-            f"درجة الثقة: "
-            f"{evidence_evaluation.get('confidence')}\n"
-            f"التفسير: "
-            f"{evidence_evaluation.get('reason')}"
-        )
-
-    def _apply_scientific_policy(
-        self,
-        response: str,
-        knowledge_type: str
-    ) -> str:
-        policies = {
-            "fact": (
-                "الحالة العلمية: حقيقة مسجلة "
-                "في قاعدة المعرفة."
-            ),
-            "inference": (
-                "الحالة العلمية: استنتاج يعتمد على "
-                "المعلومات والبيانات المتاحة، "
-                "وليس حقيقة عامة بالضرورة."
-            ),
-            "hypothesis": (
-                "الحالة العلمية: فرضية وليست حقيقة مثبتة، "
-                "وتحتاج إلى أدلة وتجارب للتحقق منها."
-            ),
-            "web_unverified": (
-                "الحالة العلمية: معلومات مسترجعة من الويب "
-                "ولم يتم التحقق منها علميًا بعد."
+        if (
+            parsed.hostname
+            and parsed.hostname.endswith(
+                "duckduckgo.com"
             )
+            and "uddg" in query
+        ):
+            target = query.get(
+                "uddg",
+                [""]
+            )[0]
+
+            if target:
+                return unquote(target)
+
+        return url
+
+    # ---------------------------------------------------------
+    # SEARCH WEB
+    # ---------------------------------------------------------
+
+    def search_web(
+        self,
+        question: str
+    ):
+        clean_question = " ".join(
+            str(question).strip().split()
+        )
+
+        if not clean_question:
+            return {
+                "status": "error",
+                "message": "السؤال فارغ.",
+            }
+
+        search_url = (
+            SEARCH_ENGINE_URL
+            + "?"
+            + urlencode(
+                {
+                    "q": clean_question,
+                }
+            )
+        )
+
+        request = Request(
+            search_url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html",
+            },
+        )
+
+        try:
+            with urlopen(
+                request,
+                timeout=REQUEST_TIMEOUT
+            ) as response:
+
+                data = response.read(
+                    MAX_DOWNLOAD_BYTES
+                )
+
+                charset = self._detect_charset(
+                    response.headers.get(
+                        "Content-Type",
+                        ""
+                    ),
+                    data
+                )
+
+                html = data.decode(
+                    charset,
+                    errors="replace"
+                )
+
+        except HTTPError as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"فشل البحث في الويب: HTTP {exc.code}"
+                ),
+            }
+
+        except URLError as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"تعذر الاتصال بمحرك البحث: "
+                    f"{exc.reason}"
+                ),
+            }
+
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"حدث خطأ أثناء البحث: {exc}"
+                ),
+            }
+
+        parser = WebSearchExtractor()
+
+        try:
+            parser.feed(html)
+            parser.close()
+
+            search_results = parser.get_results()
+
+        except Exception:
+            search_results = []
+
+        normalized_results = []
+
+        for item in search_results:
+            title = str(
+                item.get("title", "")
+            ).strip()
+
+            snippet = str(
+                item.get("snippet", "")
+            ).strip()
+
+            raw_url = str(
+                item.get("url", "")
+            ).strip()
+
+            url = self._normalize_search_url(
+                raw_url
+            )
+
+            if not title or not url:
+                continue
+
+            valid, _ = self._validate_url(
+                url
+            )
+
+            if not valid:
+                continue
+
+            normalized_results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                }
+            )
+
+            if len(normalized_results) >= MAX_SEARCH_RESULTS:
+                break
+
+        if not normalized_results:
+            return {
+                "status": "success",
+                "question": clean_question,
+                "results": [],
+                "source_count": 0,
+                "knowledge_saved": False,
+                "evidence_status": "unverified",
+            }
+
+        final_results = []
+
+        for item in normalized_results[
+            :MAX_SEARCH_SOURCES_TO_FETCH
+        ]:
+
+            source = self.prepare_source(
+                item["url"],
+                max_chars=MAX_SEARCH_CONTENT_CHARS
+            )
+
+            content = ""
+
+            if source.get("status") == "success":
+                content = source.get(
+                    "content",
+                    ""
+                )
+
+            final_results.append(
+                {
+                    "title": item["title"],
+                    "url": item["url"],
+                    "snippet": item["snippet"],
+                    "content": content,
+                }
+            )
+
+        return {
+            "status": "success",
+            "question": clean_question,
+            "results": final_results,
+            "source_count": len(final_results),
+            "knowledge_saved": False,
+            "evidence_status": "unverified",
         }
 
-        policy_note = policies.get(
-            knowledge_type,
-            "الحالة العلمية: نوع المعرفة غير معروف."
-        )
 
-        return f"{response}\n{policy_note}"
-
-
-dragon_engine = DragonEngine()
+web_learning = WebLearningEngine()
