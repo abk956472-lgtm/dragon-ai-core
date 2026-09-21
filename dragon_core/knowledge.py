@@ -1,384 +1,507 @@
-import os
+from .memory import memory
+from .knowledge import knowledge
+from .security import security
+from .self_learning import self_learning
+from .web_learning import web_learning
 
-from dataclasses import dataclass
-from threading import Lock
-
-from supabase import create_client
-
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
-
-if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL is not configured.")
-
-if not SUPABASE_SECRET_KEY:
-    raise RuntimeError("SUPABASE_SECRET_KEY is not configured.")
-
-supabase = create_client(
-    SUPABASE_URL,
-    SUPABASE_SECRET_KEY
+from policies.scientific_policy import (
+    get_scientific_rules,
+    evaluate_evidence,
+    scientific_policy_version,
 )
 
 
-@dataclass
-class KnowledgeItem:
-    title: str
-    content: str
-    source: str = "internal"
-    knowledge_type: str = "fact"
-
-
-class KnowledgeBase:
+class DragonEngine:
     def __init__(self):
-        self._items = []
-        self._lock = Lock()
+        self.name = "DRAGON AI CORE"
+        self.scientific_rules = get_scientific_rules()
 
-        self._load_from_database()
+    def process(self, message: str) -> dict:
+        message = message.strip()
 
-    def _load_from_database(self):
-        response = (
-            supabase
-            .table("knowledge")
-            .select(
-                "title,content,source,knowledge_type"
-            )
-            .execute()
+        if not message:
+            return {
+                "status": "error",
+                "message": "Empty message."
+            }
+
+        memory.add(
+            "user",
+            message
         )
 
-        rows = response.data or []
+        # ==============================================
+        # Manual Learning Command
+        #
+        # تعلم | title | content | source | type
+        # ==============================================
 
-        with self._lock:
-            self._items = [
-                KnowledgeItem(
-                    title=row["title"],
-                    content=row["content"],
-                    source=row.get(
-                        "source",
-                        "internal"
-                    ),
-                    knowledge_type=row.get(
-                        "knowledge_type",
-                        "fact"
-                    )
-                )
-                for row in rows
-            ]
+        if message.startswith("تعلم |"):
+            return self._process_learning_command(message)
 
-    def add(
-        self,
-        title: str,
-        content: str,
-        source: str = "internal",
-        knowledge_type: str = "fact"
-    ):
-        allowed_types = {
-            "fact",
-            "inference",
-            "hypothesis"
-        }
+        # ==============================================
+        # Self Learning Command
+        #
+        # تعلم ذاتي | title | content | source | type
+        # ==============================================
 
-        if knowledge_type not in allowed_types:
-            raise ValueError(
-                "knowledge_type must be fact, inference, or hypothesis."
+        if message.startswith("تعلم ذاتي |"):
+            return self._process_self_learning_command(
+                message
             )
 
-        item = KnowledgeItem(
+        # ==============================================
+        # Web Learning Command
+        #
+        # تعلم من الويب | url | title | type
+        # ==============================================
+
+        if message.startswith("تعلم من الويب |"):
+            return self._process_web_learning_command(
+                message
+            )
+
+        # ==============================================
+        # Natural Learning
+        #
+        # تعلم أن ...
+        # ==============================================
+
+        if message.startswith("تعلم أن "):
+            return self._process_natural_learning(message)
+
+        knowledge_results = knowledge.search(message)
+
+        previous_memories = memory.search_scientific(message)
+
+        response, evidence_evaluation = self._generate_response(
+            message,
+            knowledge_results,
+            previous_memories
+        )
+
+        memory_content = response
+
+        if previous_memories:
+            memory_marker = "\n\nمن الذاكرة العلمية السابقة:"
+
+            if memory_marker in memory_content:
+                memory_content = memory_content.split(
+                    memory_marker,
+                    1
+                )[0]
+
+        if memory_content.strip():
+            memory.add(
+                "assistant",
+                memory_content,
+                memory_type="scientific",
+                evidence_status=evidence_evaluation[
+                    "evidence_status"
+                ],
+                confidence=evidence_evaluation[
+                    "confidence"
+                ]
+            )
+
+        return {
+            "status": "success",
+            "response": response,
+            "knowledge_matches": len(knowledge_results),
+            "scientific_memory_matches": len(previous_memories),
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "evidence_status":
+                evidence_evaluation["evidence_status"],
+            "evidence_confidence":
+                evidence_evaluation["confidence"],
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
+    # ==========================================================
+    # Manual Learning
+    # ==========================================================
+
+    def _process_learning_command(
+        self,
+        message: str
+    ) -> dict:
+        parts = [
+            part.strip()
+            for part in message.split("|")
+        ]
+
+        if len(parts) != 5:
+            return {
+                "status": "error",
+                "message": (
+                    "صيغة التعلم غير صحيحة. "
+                    "استخدم: تعلم | العنوان | المحتوى | المصدر | "
+                    "fact/inference/hypothesis"
+                )
+            }
+
+        _, title, content, source, knowledge_type = parts
+
+        result = knowledge.learn(
             title=title,
             content=content,
             source=source,
             knowledge_type=knowledge_type
         )
 
-        with self._lock:
-            for existing in self._items:
-                if (
-                    existing.title == title
-                    and existing.content == content
-                    and existing.source == source
-                    and existing.knowledge_type == knowledge_type
-                ):
-                    return
+        return {
+            "status": result["status"],
+            "learning": result,
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
 
-        supabase.table("knowledge").insert({
-            "title": title,
-            "content": content,
-            "source": source,
-            "knowledge_type": knowledge_type
-        }).execute()
+    # ==========================================================
+    # Self Learning
+    # ==========================================================
 
-        with self._lock:
-            self._items.append(item)
-
-    def learn(
+    def _process_self_learning_command(
         self,
-        title: str,
-        content: str,
-        source: str,
-        knowledge_type: str
+        message: str
     ) -> dict:
+        parts = [
+            part.strip()
+            for part in message.split("|")
+        ]
 
-        title = title.strip()
-        content = content.strip()
-        source = source.strip()
-        knowledge_type = knowledge_type.strip().lower()
-
-        if not title:
+        if len(parts) != 5:
             return {
-                "status": "rejected",
-                "reason": "Knowledge title is required."
+                "status": "error",
+                "message": (
+                    "صيغة التعلم الذاتي غير صحيحة. "
+                    "استخدم: تعلم ذاتي | العنوان | المحتوى | "
+                    "المصدر | fact/inference/hypothesis"
+                )
             }
+
+        _, title, content, source, knowledge_type = parts
+
+        result = self_learning.learn(
+            title=title,
+            content=content,
+            source=source,
+            knowledge_type=knowledge_type
+        )
+
+        return {
+            "status": result["status"],
+            "learning": result,
+            "learning_engine": "self_learning",
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
+    # ==========================================================
+    # Web Learning
+    # ==========================================================
+
+    def _process_web_learning_command(
+        self,
+        message: str
+    ) -> dict:
+        parts = [
+            part.strip()
+            for part in message.split("|")
+        ]
+
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "message": (
+                    "صيغة التعلم من الويب غير صحيحة. "
+                    "استخدم: "
+                    "تعلم من الويب | الرابط | العنوان | "
+                    "fact/inference/hypothesis"
+                )
+            }
+
+        _, url, title, knowledge_type = parts
+
+        result = web_learning.learn_from_url(
+            url=url,
+            title=title,
+            knowledge_type=knowledge_type,
+            confidence="low"
+        )
+
+        return {
+            "status": result.get(
+                "status",
+                "unknown"
+            ),
+            "learning_engine": "web_learning",
+            "learning": result,
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
+    # ==========================================================
+    # Natural Learning
+    # ==========================================================
+
+    def _process_natural_learning(
+        self,
+        message: str
+    ) -> dict:
+        content = message[
+            len("تعلم أن "):
+        ].strip()
 
         if not content:
             return {
-                "status": "rejected",
-                "reason": "Knowledge content is required."
-            }
-
-        if not source:
-            return {
-                "status": "rejected",
-                "reason": "Knowledge source is required."
-            }
-
-        allowed_types = {
-            "fact",
-            "inference",
-            "hypothesis"
-        }
-
-        if knowledge_type not in allowed_types:
-            return {
-                "status": "rejected",
-                "reason": (
-                    "knowledge_type must be fact, "
-                    "inference, or hypothesis."
+                "status": "error",
+                "message": (
+                    "لم تحدد المعلومة التي تريد أن أتعلمها."
                 )
             }
 
-        with self._lock:
-            for item in self._items:
-                if (
-                    item.title == title
-                    and item.content == content
-                    and item.source == source
-                    and item.knowledge_type == knowledge_type
-                ):
-                    return {
-                        "status": "duplicate",
-                        "reason": "This knowledge already exists."
-                    }
-
-        try:
-            supabase.table("knowledge").insert({
-                "title": title,
-                "content": content,
-                "source": source,
-                "knowledge_type": knowledge_type
-            }).execute()
-
-        except Exception as error:
-            return {
-                "status": "error",
-                "reason": f"Database error: {error}"
-            }
-
-        item = KnowledgeItem(
-            title=title,
+        result = knowledge.learn(
+            title="معلومة متعلمة",
             content=content,
-            source=source,
-            knowledge_type=knowledge_type
+            source="user-natural-learning",
+            knowledge_type="fact"
         )
 
-        with self._lock:
-            self._items.append(item)
-
-        return {
-            "status": "learned",
-            "title": title,
-            "knowledge_type": knowledge_type,
-            "source": source
-        }
-
-    def get_all(self):
-        with self._lock:
-            return list(self._items)
-
-    def _normalize_arabic(self, text: str) -> str:
-        text = text.lower().strip()
-
-        replacements = {
-            "أ": "ا",
-            "إ": "ا",
-            "آ": "ا",
-            "ة": "ه",
-            "ى": "ي",
-        }
-
-        for old, new in replacements.items():
-            text = text.replace(old, new)
-
-        punctuation = "،؛؟!.,:;()[]{}\"'"
-
-        for mark in punctuation:
-            text = text.replace(mark, " ")
-
-        words = text.split()
-        normalized_words = []
-
-        prefixes = (
-            "وال",
-            "بال",
-            "كال",
-            "فال",
-            "لل",
-            "و",
-            "ف",
-            "ب",
-            "ك",
-            "ل",
-        )
-
-        for word in words:
-            for prefix in prefixes:
-                if (
-                    word.startswith(prefix)
-                    and len(word) > len(prefix) + 2
-                ):
-                    word = word[len(prefix):]
-                    break
-
-            if word.startswith("ال") and len(word) > 4:
-                word = word[2:]
-
-            if word:
-                normalized_words.append(word)
-
-        return " ".join(normalized_words)
-
-    def search(self, query: str):
-        normalized_query = self._normalize_arabic(query)
-
-        if not normalized_query:
-            return []
-
-        ignored_words = {
-            "ما",
-            "ماذا",
-            "هي",
-            "هو",
-            "من",
-            "عن",
-            "في",
-            "على",
-            "الى",
-            "هل",
-            "و",
-            "او",
-            "مع",
-            "هذا",
-            "هذه",
-            "ذلك",
-            "تلك",
-            "التي",
-            "الذي",
-            "ماهي",
-            "ماهو",
-        }
-
-        words = [
-            word
-            for word in normalized_query.split()
-            if len(word) > 2
-            and word not in ignored_words
-        ]
-
-        with self._lock:
-            scored_results = []
-
-            for item in self._items:
-                title = self._normalize_arabic(item.title)
-                content = self._normalize_arabic(item.content)
-
-                score = 0
-                matched_words = 0
-
-                if normalized_query in title:
-                    score += 20
-
-                if normalized_query in content:
-                    score += 5
-
-                for word in words:
-                    if word in title:
-                        score += 10
-                        matched_words += 1
-                    elif word in content:
-                        score += 2
-                        matched_words += 1
-
-                if matched_words > 0:
-                    scored_results.append(
-                        (
-                            score,
-                            matched_words,
-                            item
-                        )
-                    )
-
-            scored_results.sort(
-                key=lambda result: (
-                    result[0],
-                    result[1]
-                ),
-                reverse=True
+        if result["status"] == "learned":
+            response = (
+                "تم تعلم المعلومة وحفظها في قاعدة المعرفة."
             )
 
-            return [
-                item
-                for score, matched_words, item
-                in scored_results
-            ]
+        elif result["status"] == "duplicate":
+            response = (
+                "هذه المعلومة موجودة بالفعل "
+                "في قاعدة المعرفة."
+            )
 
-    def clear(self):
-        with self._lock:
-            self._items.clear()
+        else:
+            response = (
+                "لم يتم حفظ المعلومة.\n"
+                f"السبب: {result.get('reason', 'سبب غير معروف')}"
+            )
 
+        return {
+            "status": result["status"],
+            "response": response,
+            "learning": result,
+            "learning_engine": "natural_learning",
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
 
-knowledge = KnowledgeBase()
+    # ==========================================================
+    # Response Generation
+    # ==========================================================
 
-
-# ==============================
-# Scientific Knowledge
-# ==============================
-
-knowledge.add(
-    "الخلية",
-    "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
-    "تختلف الخلايا في بنيتها ووظائفها، وتوجد خلايا بدائية النوى "
-    "وخلايا حقيقية النوى.",
-    "internal-scientific",
-    "fact"
-)
-
-
-knowledge.add(
-    "مثال على فرضية علمية",
-    "هذه فرضية علمية توضيحية وليست حقيقة مثبتة: "
-    "قد يؤثر عامل بيئي معين في معدل نمو كائن حي، "
-    "لكن إثبات هذه الفرضية يتطلب تجارب وبيانات قابلة للتحقق.",
-    "internal-scientific",
-    "hypothesis"
-)
-
-
-knowledge.add(
-    "مثال على استنتاج علمي",
-    "إذا أظهرت مجموعة من التجارب أن ارتفاع درجة الحرارة ضمن "
-    "نطاق محدد يرتبط بزيادة معدل تفاعل معين، فيمكن استنتاج "
-    "وجود علاقة بين درجة الحرارة ومعدل التفاعل ضمن شروط التجربة. "
-    "هذا الاستنتاج يعتمد على البيانات المتاحة ولا يعني بالضرورة "
-    "وجود علاقة عامة في جميع الظروف.",
-    "internal-scientific",
-    "inference"
+    def _generate_response(
+        self,
+        message,
+        knowledge_results,
+        previous_memories
+    ):
+        if not knowledge_results:
+            if previous_memories:
+                return (
+                    self._build_memory_response(
+                        previous_memories
+                    ),
+                    {
+                        "evidence_status": "memory_based",
+                        "confidence": "low"
+                    }
                 )
+
+            return (
+                "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
+                "في قاعدة المعرفة."
+            ), {
+                "evidence_status": "insufficient",
+                "confidence": "low"
+            }
+
+        if len(knowledge_results) == 1:
+            result = knowledge_results[0]
+
+            response = (
+                f"{result.content}\n"
+                f"نوع المعرفة: {result.knowledge_type}\n"
+                f"المصدر: {result.source}"
+            )
+
+            response = self._apply_scientific_policy(
+                response,
+                result.knowledge_type
+            )
+
+            evidence_evaluation = evaluate_evidence(
+                facts_count=1
+                if result.knowledge_type == "fact"
+                else 0,
+                inference_count=1
+                if result.knowledge_type == "inference"
+                else 0,
+                hypothesis_count=1
+                if result.knowledge_type == "hypothesis"
+                else 0
+            )
+
+            if previous_memories:
+                response += (
+                    "\n\n"
+                    + self._build_memory_response(
+                        previous_memories
+                    )
+                )
+
+            return response, evidence_evaluation
+
+        sections = []
+
+        facts_count = 0
+        inference_count = 0
+        hypothesis_count = 0
+
+        for index, result in enumerate(
+            knowledge_results,
+            start=1
+        ):
+            if result.knowledge_type == "fact":
+                facts_count += 1
+
+            elif result.knowledge_type == "inference":
+                inference_count += 1
+
+            elif result.knowledge_type == "hypothesis":
+                hypothesis_count += 1
+
+            sections.append(
+                f"المعلومة {index}:\n"
+                f"{result.content}\n"
+                f"نوع المعرفة: {result.knowledge_type}\n"
+                f"المصدر: {result.source}"
+            )
+
+        evidence_evaluation = evaluate_evidence(
+            facts_count=facts_count,
+            inference_count=inference_count,
+            hypothesis_count=hypothesis_count
+        )
+
+        response = (
+            "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
+            + "\n\n".join(sections)
+            + "\n\n"
+            + self._build_scientific_assessment(
+                evidence_evaluation
+            )
+        )
+
+        if previous_memories:
+            response += (
+                "\n\n"
+                + self._build_memory_response(
+                    previous_memories
+                )
+            )
+
+        return response, evidence_evaluation
+
+    # ==========================================================
+    # Memory Response
+    # ==========================================================
+
+    def _build_memory_response(
+        self,
+        previous_memories
+    ):
+        if not previous_memories:
+            return ""
+
+        latest_memory = previous_memories[-1]
+
+        return (
+            "من الذاكرة العلمية السابقة:\n"
+            f"{latest_memory.content}\n"
+            f"حالة الأدلة السابقة: "
+            f"{latest_memory.evidence_status or 'غير محددة'}\n"
+            f"درجة الثقة السابقة: "
+            f"{latest_memory.confidence or 'غير محددة'}"
+        )
+
+    # ==========================================================
+    # Scientific Assessment
+    # ==========================================================
+
+    def _build_scientific_assessment(
+        self,
+        evidence_evaluation
+    ):
+        return (
+            "التقييم العلمي:\n"
+            f"حالة الأدلة: "
+            f"{evidence_evaluation['evidence_status']}\n"
+            f"درجة الثقة: "
+            f"{evidence_evaluation['confidence']}\n"
+            f"التفسير: "
+            f"{evidence_evaluation['reason']}"
+        )
+
+    # ==========================================================
+    # Scientific Policy
+    # ==========================================================
+
+    def _apply_scientific_policy(
+        self,
+        response: str,
+        knowledge_type: str
+    ):
+        if knowledge_type == "fact":
+            policy_note = (
+                "الحالة العلمية: حقيقة مسجلة في قاعدة المعرفة."
+            )
+
+        elif knowledge_type == "inference":
+            policy_note = (
+                "الحالة العلمية: استنتاج يعتمد على المعلومات "
+                "والبيانات المتاحة، وليس حقيقة عامة بالضرورة."
+            )
+
+        elif knowledge_type == "hypothesis":
+            policy_note = (
+                "الحالة العلمية: فرضية وليست حقيقة مثبتة، "
+                "وتحتاج إلى أدلة وتجارب للتحقق منها."
+            )
+
+        else:
+            policy_note = (
+                "الحالة العلمية: نوع المعرفة غير معروف."
+            )
+
+        return f"{response}\n{policy_note}"
+
+
+dragon_engine = DragonEngine()
