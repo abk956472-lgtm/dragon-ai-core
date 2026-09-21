@@ -1,5 +1,24 @@
+import os
+
 from dataclasses import dataclass
 from threading import Lock
+
+from supabase import create_client
+
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
+
+if not SUPABASE_URL:
+    raise RuntimeError("SUPABASE_URL is not configured.")
+
+if not SUPABASE_SECRET_KEY:
+    raise RuntimeError("SUPABASE_SECRET_KEY is not configured.")
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
+)
 
 
 @dataclass
@@ -14,6 +33,37 @@ class KnowledgeBase:
     def __init__(self):
         self._items = []
         self._lock = Lock()
+
+        self._load_from_database()
+
+    def _load_from_database(self):
+        response = (
+            supabase
+            .table("knowledge")
+            .select(
+                "title,content,source,knowledge_type"
+            )
+            .execute()
+        )
+
+        rows = response.data or []
+
+        with self._lock:
+            self._items = [
+                KnowledgeItem(
+                    title=row["title"],
+                    content=row["content"],
+                    source=row.get(
+                        "source",
+                        "internal"
+                    ),
+                    knowledge_type=row.get(
+                        "knowledge_type",
+                        "fact"
+                    )
+                )
+                for row in rows
+            ]
 
     def add(
         self,
@@ -41,6 +91,23 @@ class KnowledgeBase:
         )
 
         with self._lock:
+            for existing in self._items:
+                if (
+                    existing.title == title
+                    and existing.content == content
+                    and existing.source == source
+                    and existing.knowledge_type == knowledge_type
+                ):
+                    return
+
+        supabase.table("knowledge").insert({
+            "title": title,
+            "content": content,
+            "source": source,
+            "knowledge_type": knowledge_type
+        }).execute()
+
+        with self._lock:
             self._items.append(item)
 
     def learn(
@@ -50,15 +117,6 @@ class KnowledgeBase:
         source: str,
         knowledge_type: str
     ) -> dict:
-        """
-        إضافة معرفة جديدة بطريقة منضبطة.
-
-        لا يتم قبول المعرفة بدون:
-        - عنوان
-        - محتوى
-        - مصدر
-        - نوع معرفة واضح
-        """
 
         title = title.strip()
         content = content.strip()
@@ -98,7 +156,6 @@ class KnowledgeBase:
                 )
             }
 
-        # منع إضافة معرفة مطابقة تمامًا للمحتوى نفسه
         with self._lock:
             for item in self._items:
                 if (
@@ -112,12 +169,29 @@ class KnowledgeBase:
                         "reason": "This knowledge already exists."
                     }
 
-        self.add(
+        try:
+            supabase.table("knowledge").insert({
+                "title": title,
+                "content": content,
+                "source": source,
+                "knowledge_type": knowledge_type
+            }).execute()
+
+        except Exception as error:
+            return {
+                "status": "error",
+                "reason": f"Database error: {error}"
+            }
+
+        item = KnowledgeItem(
             title=title,
             content=content,
             source=source,
             knowledge_type=knowledge_type
         )
+
+        with self._lock:
+            self._items.append(item)
 
         return {
             "status": "learned",
@@ -278,7 +352,6 @@ knowledge = KnowledgeBase()
 # Scientific Knowledge
 # ==============================
 
-# Scientific fact
 knowledge.add(
     "الخلية",
     "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
@@ -289,7 +362,6 @@ knowledge.add(
 )
 
 
-# Scientific hypothesis
 knowledge.add(
     "مثال على فرضية علمية",
     "هذه فرضية علمية توضيحية وليست حقيقة مثبتة: "
@@ -300,7 +372,6 @@ knowledge.add(
 )
 
 
-# Scientific inference
 knowledge.add(
     "مثال على استنتاج علمي",
     "إذا أظهرت مجموعة من التجارب أن ارتفاع درجة الحرارة ضمن "
@@ -310,4 +381,4 @@ knowledge.add(
     "وجود علاقة عامة في جميع الظروف.",
     "internal-scientific",
     "inference"
-)
+                )
