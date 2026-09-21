@@ -43,6 +43,89 @@ class KnowledgeBase:
         with self._lock:
             self._items.append(item)
 
+    def learn(
+        self,
+        title: str,
+        content: str,
+        source: str,
+        knowledge_type: str
+    ) -> dict:
+        """
+        إضافة معرفة جديدة بطريقة منضبطة.
+
+        لا يتم قبول المعرفة بدون:
+        - عنوان
+        - محتوى
+        - مصدر
+        - نوع معرفة واضح
+        """
+
+        title = title.strip()
+        content = content.strip()
+        source = source.strip()
+        knowledge_type = knowledge_type.strip().lower()
+
+        if not title:
+            return {
+                "status": "rejected",
+                "reason": "Knowledge title is required."
+            }
+
+        if not content:
+            return {
+                "status": "rejected",
+                "reason": "Knowledge content is required."
+            }
+
+        if not source:
+            return {
+                "status": "rejected",
+                "reason": "Knowledge source is required."
+            }
+
+        allowed_types = {
+            "fact",
+            "inference",
+            "hypothesis"
+        }
+
+        if knowledge_type not in allowed_types:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "knowledge_type must be fact, "
+                    "inference, or hypothesis."
+                )
+            }
+
+        # منع إضافة معرفة مطابقة تمامًا للمحتوى نفسه
+        with self._lock:
+            for item in self._items:
+                if (
+                    item.title == title
+                    and item.content == content
+                    and item.source == source
+                    and item.knowledge_type == knowledge_type
+                ):
+                    return {
+                        "status": "duplicate",
+                        "reason": "This knowledge already exists."
+                    }
+
+        self.add(
+            title=title,
+            content=content,
+            source=source,
+            knowledge_type=knowledge_type
+        )
+
+        return {
+            "status": "learned",
+            "title": title,
+            "knowledge_type": knowledge_type,
+            "source": source
+        }
+
     def get_all(self):
         with self._lock:
             return list(self._items)
@@ -83,8 +166,6 @@ class KnowledgeBase:
         )
 
         for word in words:
-            original_word = word
-
             for prefix in prefixes:
                 if (
                     word.startswith(prefix)
