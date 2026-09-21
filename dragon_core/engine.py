@@ -12,9 +12,27 @@ from policies.scientific_policy import (
 
 
 class DragonEngine:
+    """
+    المحرك المركزي لـ DRAGON AI CORE.
+
+    مسؤول عن:
+    - استقبال الرسائل
+    - التعلم اليدوي
+    - التعلم الذاتي
+    - التعلم من الويب
+    - البحث في المعرفة
+    - استرجاع الذاكرة العلمية
+    - تطبيق السياسة العلمية
+    - بناء إجابات منظمة
+    """
+
     def __init__(self):
         self.name = "DRAGON AI CORE"
         self.scientific_rules = get_scientific_rules()
+
+    # ==========================================================
+    # Main Processing
+    # ==========================================================
 
     def process(self, message: str) -> dict:
         message = message.strip()
@@ -25,54 +43,55 @@ class DragonEngine:
                 "message": "Empty message."
             }
 
+        # حفظ رسالة المستخدم
         memory.add(
             "user",
             message
         )
 
-        # ==============================================
-        # Manual Learning Command
-        #
-        # تعلم | title | content | source | type
-        # ==============================================
+        # ======================================================
+        # Manual Learning
+        # ======================================================
 
         if message.startswith("تعلم |"):
             return self._process_learning_command(message)
 
-        # ==============================================
-        # Self Learning Command
-        #
-        # تعلم ذاتي | title | content | source | type
-        # ==============================================
+        # ======================================================
+        # Self Learning
+        # ======================================================
 
         if message.startswith("تعلم ذاتي |"):
-            return self._process_self_learning_command(
-                message
-            )
+            return self._process_self_learning_command(message)
 
-        # ==============================================
-        # Web Learning Command
-        #
-        # تعلم من الويب | url | title | type
-        # ==============================================
+        # ======================================================
+        # Web Learning
+        # ======================================================
 
         if message.startswith("تعلم من الويب |"):
-            return self._process_web_learning_command(
-                message
-            )
+            return self._process_web_learning_command(message)
 
-        # ==============================================
+        # ======================================================
         # Natural Learning
-        #
-        # تعلم أن ...
-        # ==============================================
+        # ======================================================
 
         if message.startswith("تعلم أن "):
             return self._process_natural_learning(message)
 
+        # ======================================================
+        # Knowledge Retrieval
+        # ======================================================
+
         knowledge_results = knowledge.search(message)
 
+        # ======================================================
+        # Scientific Memory
+        # ======================================================
+
         previous_memories = memory.search_scientific(message)
+
+        # ======================================================
+        # Response Generation
+        # ======================================================
 
         response, evidence_evaluation = self._generate_response(
             message,
@@ -80,16 +99,20 @@ class DragonEngine:
             previous_memories
         )
 
+        # ======================================================
+        # Store Assistant Memory
+        # ======================================================
+
         memory_content = response
 
-        if previous_memories:
-            memory_marker = "\n\nمن الذاكرة العلمية السابقة:"
+        # لا نخزن قسم الذاكرة داخل الذاكرة مرة أخرى.
+        memory_marker = "\n\nمن الذاكرة العلمية السابقة:"
 
-            if memory_marker in memory_content:
-                memory_content = memory_content.split(
-                    memory_marker,
-                    1
-                )[0]
+        if memory_marker in memory_content:
+            memory_content = memory_content.split(
+                memory_marker,
+                1
+            )[0]
 
         if memory_content.strip():
             memory.add(
@@ -129,6 +152,7 @@ class DragonEngine:
         self,
         message: str
     ) -> dict:
+
         parts = [
             part.strip()
             for part in message.split("|")
@@ -156,6 +180,7 @@ class DragonEngine:
         return {
             "status": result["status"],
             "learning": result,
+            "learning_engine": "manual_learning",
             "scientific_policy_version":
                 scientific_policy_version(),
             "scientific_rules_active":
@@ -172,6 +197,7 @@ class DragonEngine:
         self,
         message: str
     ) -> dict:
+
         parts = [
             part.strip()
             for part in message.split("|")
@@ -216,6 +242,7 @@ class DragonEngine:
         self,
         message: str
     ) -> dict:
+
         parts = [
             part.strip()
             for part in message.split("|")
@@ -264,6 +291,7 @@ class DragonEngine:
         self,
         message: str
     ) -> dict:
+
         content = message[
             len("تعلم أن "):
         ].strip()
@@ -322,7 +350,13 @@ class DragonEngine:
         knowledge_results,
         previous_memories
     ):
+
+        # ------------------------------------------------------
+        # No Knowledge
+        # ------------------------------------------------------
+
         if not knowledge_results:
+
             if previous_memories:
                 return (
                     self._build_memory_response(
@@ -342,7 +376,23 @@ class DragonEngine:
                 "confidence": "low"
             }
 
+        # ------------------------------------------------------
+        # Conceptual Comparison
+        # ------------------------------------------------------
+
+        if self._is_conceptual_question(message):
+
+            return self._build_conceptual_response(
+                message,
+                knowledge_results
+            )
+
+        # ------------------------------------------------------
+        # Single Result
+        # ------------------------------------------------------
+
         if len(knowledge_results) == 1:
+
             result = knowledge_results[0]
 
             response = (
@@ -360,9 +410,11 @@ class DragonEngine:
                 facts_count=1
                 if result.knowledge_type == "fact"
                 else 0,
+
                 inference_count=1
                 if result.knowledge_type == "inference"
                 else 0,
+
                 hypothesis_count=1
                 if result.knowledge_type == "hypothesis"
                 else 0
@@ -378,6 +430,14 @@ class DragonEngine:
 
             return response, evidence_evaluation
 
+        # ------------------------------------------------------
+        # Multiple Results
+        # ------------------------------------------------------
+
+        selected_results = self._select_best_results(
+            knowledge_results
+        )
+
         sections = []
 
         facts_count = 0
@@ -385,9 +445,10 @@ class DragonEngine:
         hypothesis_count = 0
 
         for index, result in enumerate(
-            knowledge_results,
+            selected_results,
             start=1
         ):
+
             if result.knowledge_type == "fact":
                 facts_count += 1
 
@@ -411,7 +472,7 @@ class DragonEngine:
         )
 
         response = (
-            "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
+            "وجدت معلومات مرتبطة بالسؤال:\n\n"
             + "\n\n".join(sections)
             + "\n\n"
             + self._build_scientific_assessment(
@@ -430,6 +491,150 @@ class DragonEngine:
         return response, evidence_evaluation
 
     # ==========================================================
+    # Conceptual Question Detection
+    # ==========================================================
+
+    def _is_conceptual_question(
+        self,
+        message: str
+    ) -> bool:
+
+        normalized = message.strip().lower()
+
+        conceptual_patterns = (
+            "ما الفرق بين",
+            "ما هو الفرق بين",
+            "ماهي الفرق بين",
+            "ما الفرق",
+            "ما معنى",
+            "ماذا يعني",
+            "ما هو",
+            "ما هي",
+            "اشرح الفرق",
+            "قارن بين",
+            "مقارنة بين",
+        )
+
+        return any(
+            pattern in normalized
+            for pattern in conceptual_patterns
+        )
+
+    # ==========================================================
+    # Conceptual Response
+    # ==========================================================
+
+    def _build_conceptual_response(
+        self,
+        message,
+        knowledge_results
+    ):
+
+        selected = self._select_conceptual_results(
+            knowledge_results
+        )
+
+        if not selected:
+            return (
+                "السؤال مفاهيمي، لكن لا توجد معلومات "
+                "كافية في قاعدة المعرفة الحالية للإجابة عليه."
+            ), {
+                "evidence_status": "not_applicable",
+                "confidence": "not_applicable"
+            }
+
+        sections = []
+
+        for result in selected:
+
+            sections.append(
+                f"• {result.title}\n"
+                f"{result.content}\n"
+                f"نوع المعرفة: {result.knowledge_type}\n"
+                f"المصدر: {result.source}"
+            )
+
+        response = (
+            "إجابة مفاهيمية اعتمادًا على المعرفة المسجلة:\n\n"
+            + "\n\n".join(sections)
+        )
+
+        response += (
+            "\n\n"
+            "ملاحظة: هذا السؤال يطلب مقارنة أو تعريفًا "
+            "مفاهيميًا، لذلك لا أتعامل معه كتقييم لقوة "
+            "الأدلة التجريبية."
+        )
+
+        return response, {
+            "evidence_status": "not_applicable",
+            "confidence": "not_applicable"
+        }
+
+    # ==========================================================
+    # Result Selection
+    # ==========================================================
+
+    def _select_best_results(
+        self,
+        results,
+        limit: int = 5
+    ):
+
+        if len(results) <= limit:
+            return results
+
+        return results[:limit]
+
+    # ==========================================================
+    # Conceptual Result Selection
+    # ==========================================================
+
+    def _select_conceptual_results(
+        self,
+        results
+    ):
+
+        # نعطي أولوية للمصادر العلمية الداخلية
+        internal_scientific = [
+            result
+            for result in results
+            if result.source == "internal-scientific"
+        ]
+
+        if internal_scientific:
+            results = internal_scientific
+
+        # نضمن عدم تكرار نفس نوع المعرفة
+        selected = []
+
+        used_types = set()
+
+        for result in results:
+
+            knowledge_type = result.knowledge_type
+
+            if knowledge_type not in used_types:
+                selected.append(result)
+                used_types.add(knowledge_type)
+
+        # إذا كانت لدينا نتائج إضافية مفيدة
+        # نسمح بها حتى ثلاثة عناصر فقط.
+        if len(selected) < 3:
+
+            for result in results:
+
+                if result in selected:
+                    continue
+
+                selected.append(result)
+
+                if len(selected) >= 3:
+                    break
+
+        return selected[:3]
+
+    # ==========================================================
     # Memory Response
     # ==========================================================
 
@@ -437,14 +642,26 @@ class DragonEngine:
         self,
         previous_memories
     ):
+
         if not previous_memories:
             return ""
 
         latest_memory = previous_memories[-1]
 
+        content = latest_memory.content.strip()
+
+        # منع تضخم الذاكرة داخل الرد
+        max_memory_length = 700
+
+        if len(content) > max_memory_length:
+            content = (
+                content[:max_memory_length].rstrip()
+                + "..."
+            )
+
         return (
             "من الذاكرة العلمية السابقة:\n"
-            f"{latest_memory.content}\n"
+            f"{content}\n"
             f"حالة الأدلة السابقة: "
             f"{latest_memory.evidence_status or 'غير محددة'}\n"
             f"درجة الثقة السابقة: "
@@ -459,6 +676,7 @@ class DragonEngine:
         self,
         evidence_evaluation
     ):
+
         return (
             "التقييم العلمي:\n"
             f"حالة الأدلة: "
@@ -478,24 +696,29 @@ class DragonEngine:
         response: str,
         knowledge_type: str
     ):
+
         if knowledge_type == "fact":
+
             policy_note = (
                 "الحالة العلمية: حقيقة مسجلة في قاعدة المعرفة."
             )
 
         elif knowledge_type == "inference":
+
             policy_note = (
                 "الحالة العلمية: استنتاج يعتمد على المعلومات "
                 "والبيانات المتاحة، وليس حقيقة عامة بالضرورة."
             )
 
         elif knowledge_type == "hypothesis":
+
             policy_note = (
                 "الحالة العلمية: فرضية وليست حقيقة مثبتة، "
                 "وتحتاج إلى أدلة وتجارب للتحقق منها."
             )
 
         else:
+
             policy_note = (
                 "الحالة العلمية: نوع المعرفة غير معروف."
             )
