@@ -2,6 +2,7 @@ from .memory import memory
 from .knowledge import knowledge
 from .security import security
 from .self_learning import self_learning
+from .web_learning import web_learning
 
 from policies.scientific_policy import (
     get_scientific_rules,
@@ -46,6 +47,17 @@ class DragonEngine:
 
         if message.startswith("تعلم ذاتي |"):
             return self._process_self_learning_command(
+                message
+            )
+
+        # ==============================================
+        # Web Learning Command
+        #
+        # تعلم من الويب | url | title | type
+        # ==============================================
+
+        if message.startswith("تعلم من الويب |"):
+            return self._process_web_learning_command(
                 message
             )
 
@@ -179,6 +191,54 @@ class DragonEngine:
             "status": result["status"],
             "learning": result,
             "learning_engine": "self_learning",
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
+    # ==========================================================
+    # Web Learning
+    # ==========================================================
+
+    def _process_web_learning_command(
+        self,
+        message: str
+    ) -> dict:
+        parts = [
+            part.strip()
+            for part in message.split("|")
+        ]
+
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "message": (
+                    "صيغة التعلم من الويب غير صحيحة. "
+                    "استخدم: "
+                    "تعلم من الويب | الرابط | العنوان | "
+                    "fact/inference/hypothesis"
+                )
+            }
+
+        _, url, title, knowledge_type = parts
+
+        result = web_learning.learn_from_url(
+            url=url,
+            title=title,
+            knowledge_type=knowledge_type,
+            confidence="low"
+        )
+
+        return {
+            "status": result.get(
+                "status",
+                "unknown"
+            ),
+            "learning_engine": "web_learning",
+            "learning": result,
             "scientific_policy_version":
                 scientific_policy_version(),
             "scientific_rules_active":
