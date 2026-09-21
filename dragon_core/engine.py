@@ -26,9 +26,12 @@ class DragonEngine:
 
         knowledge_results = knowledge.search(message)
 
+        previous_memories = memory.search_scientific(message)
+
         response, evidence_evaluation = self._generate_response(
             message,
-            knowledge_results
+            knowledge_results,
+            previous_memories
         )
 
         memory.add(
@@ -43,6 +46,7 @@ class DragonEngine:
             "status": "success",
             "response": response,
             "knowledge_matches": len(knowledge_results),
+            "scientific_memory_matches": len(previous_memories),
             "scientific_policy_version":
                 scientific_policy_version(),
             "scientific_rules_active":
@@ -58,9 +62,21 @@ class DragonEngine:
     def _generate_response(
         self,
         message,
-        knowledge_results
+        knowledge_results,
+        previous_memories
     ):
         if not knowledge_results:
+            if previous_memories:
+                return (
+                    self._build_memory_response(
+                        previous_memories
+                    ),
+                    {
+                        "evidence_status": "memory_based",
+                        "confidence": "low"
+                    }
+                )
+
             return (
                 "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
                 "في قاعدة المعرفة."
@@ -94,6 +110,14 @@ class DragonEngine:
                 if result.knowledge_type == "hypothesis"
                 else 0
             )
+
+            if previous_memories:
+                response += (
+                    "\n\n"
+                    + self._build_memory_response(
+                        previous_memories
+                    )
+                )
 
             return response, evidence_evaluation
 
@@ -138,7 +162,30 @@ class DragonEngine:
             )
         )
 
+        if previous_memories:
+            response += (
+                "\n\n"
+                + self._build_memory_response(
+                    previous_memories
+                )
+            )
+
         return response, evidence_evaluation
+
+    def _build_memory_response(
+        self,
+        previous_memories
+    ):
+        latest_memory = previous_memories[-1]
+
+        return (
+            "من الذاكرة العلمية السابقة:\n"
+            f"{latest_memory.content}\n"
+            f"حالة الأدلة السابقة: "
+            f"{latest_memory.evidence_status or 'غير محددة'}\n"
+            f"درجة الثقة السابقة: "
+            f"{latest_memory.confidence or 'غير محددة'}"
+        )
 
     def _build_scientific_assessment(
         self,
@@ -179,4 +226,9 @@ class DragonEngine:
         else:
             policy_note = (
                 "الحالة العلمية: نوع المعرفة غير معروف."
-        )
+            )
+
+        return f"{response}\n{policy_note}"
+
+
+dragon_engine = DragonEngine()
