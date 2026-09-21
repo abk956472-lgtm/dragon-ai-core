@@ -39,15 +39,18 @@ class DragonEngine:
                 security.requires_confirmation()
         }
 
-    def _generate_response(self, message: str, knowledge_results):
+    def _generate_response(self, message, knowledge_results):
         if knowledge_results:
+            result = knowledge_results[0]
+
             return (
-                "وجدت معلومات مرتبطة بطلبك في قاعدة المعرفة."
+                f"{result.content}\n"
+                f"المصدر: {result.source}"
             )
 
         return (
-            "DRAGON AI CORE استلم رسالتك بنجاح. "
-            "محرك الذكاء العلمي قيد التطوير."
+            "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
+            "في قاعدة المعرفة."
         )
 
 
