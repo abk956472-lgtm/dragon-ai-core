@@ -126,10 +126,6 @@ class WebSearchExtractor(HTMLParser):
             classes.split()
         )
 
-        # --------------------------------------------------
-        # بداية نتيجة Bing جديدة
-        # --------------------------------------------------
-
         if (
             tag == "li"
             and "b_algo" in class_names
@@ -151,16 +147,9 @@ class WebSearchExtractor(HTMLParser):
         if not self.in_result:
             return
 
-        # --------------------------------------------------
-        # عنوان النتيجة
-        # --------------------------------------------------
-
-        if (
-            tag == "h2"
-        ):
+        if tag == "h2":
             self.in_title = True
             self.title_depth = 1
-
             return
 
         if (
@@ -177,22 +166,13 @@ class WebSearchExtractor(HTMLParser):
 
             return
 
-        # --------------------------------------------------
-        # الوصف المختصر
-        # --------------------------------------------------
-
         if (
             tag == "p"
             and not self.in_title
         ):
             self.in_snippet = True
             self.snippet_depth = 1
-
             return
-
-        # --------------------------------------------------
-        # تتبع عمق العنوان والوصف
-        # --------------------------------------------------
 
         if self.in_title:
             self.title_depth += 1
@@ -735,6 +715,7 @@ class WebLearningEngine:
             + urlencode(
                 {
                     "q": clean_question,
+                    "form": "QBLH",
                 }
             )
         )
@@ -746,6 +727,9 @@ class WebLearningEngine:
                 "Accept": (
                     "text/html,"
                     "application/xhtml+xml"
+                ),
+                "Accept-Language": (
+                    "en-US,en;q=0.9"
                 ),
             },
         )
@@ -799,10 +783,6 @@ class WebLearningEngine:
                     f"{exc}"
                 ),
             }
-
-        # -----------------------------------------------------
-        # استخراج نتائج Bing
-        # -----------------------------------------------------
 
         parser = WebSearchExtractor()
 
@@ -882,10 +862,6 @@ class WebLearningEngine:
                 "knowledge_saved": False,
                 "evidence_status": "unverified",
             }
-
-        # -----------------------------------------------------
-        # جلب محتوى أول المصادر
-        # -----------------------------------------------------
 
         final_results = []
 
