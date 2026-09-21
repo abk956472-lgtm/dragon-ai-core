@@ -5,7 +5,7 @@ Web Learning Engine
 يدعم:
 1. التعلم من رابط يحدده المستخدم.
 2. البحث التلقائي في الويب من السؤال.
-3. استخدام Bing كمحرك البحث التلقائي.
+3. استخدام Bing RSS كمحرك البحث التلقائي.
 4. استخراج النص من صفحات الويب.
 5. التحقق الأساسي من عناوين URL لمنع الوصول إلى
    العناوين المحلية والخاصة.
@@ -18,11 +18,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import (
     urlencode,
     urlparse,
+    parse_qs,
+    unquote,
 )
 from urllib.request import (
     Request,
     urlopen,
 )
+import xml.etree.ElementTree as ET
 
 
 ALLOWED_SCHEMES = {"http", "https"}
@@ -89,177 +92,6 @@ class WebTextExtractor(HTMLParser):
 
     def get_text(self):
         return " ".join(self.parts)
-
-
-class WebSearchExtractor(HTMLParser):
-    """
-    استخراج نتائج البحث من صفحة Bing HTML.
-    """
-
-    def __init__(self):
-        super().__init__()
-
-        self.results = []
-
-        self.in_result = False
-        self.in_title = False
-        self.in_snippet = False
-
-        self.current_title = ""
-        self.current_url = ""
-        self.current_snippet = ""
-
-        self.title_depth = 0
-        self.snippet_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-
-        attrs_dict = dict(attrs)
-
-        classes = attrs_dict.get(
-            "class",
-            ""
-        )
-
-        class_names = set(
-            classes.split()
-        )
-
-        if (
-            tag == "li"
-            and "b_algo" in class_names
-        ):
-            if self.in_result:
-                self.close_result()
-
-            self.in_result = True
-
-            self.in_title = False
-            self.in_snippet = False
-
-            self.current_title = ""
-            self.current_url = ""
-            self.current_snippet = ""
-
-            return
-
-        if not self.in_result:
-            return
-
-        if tag == "h2":
-            self.in_title = True
-            self.title_depth = 1
-            return
-
-        if (
-            self.in_title
-            and tag == "a"
-        ):
-            href = attrs_dict.get(
-                "href",
-                ""
-            ).strip()
-
-            if href:
-                self.current_url = href
-
-            return
-
-        if (
-            tag == "p"
-            and not self.in_title
-        ):
-            self.in_snippet = True
-            self.snippet_depth = 1
-            return
-
-        if self.in_title:
-            self.title_depth += 1
-
-        elif self.in_snippet:
-            self.snippet_depth += 1
-
-    def handle_endtag(self, tag):
-        tag = tag.lower()
-
-        if self.in_title:
-
-            if tag == "h2":
-                self.in_title = False
-                self.title_depth = 0
-
-            elif self.title_depth > 0:
-                self.title_depth -= 1
-
-        if self.in_snippet:
-
-            if tag == "p":
-                self.in_snippet = False
-                self.snippet_depth = 0
-
-            elif self.snippet_depth > 0:
-                self.snippet_depth -= 1
-
-    def handle_data(self, data):
-        text = data.strip()
-
-        if not text:
-            return
-
-        if self.in_title:
-            self.current_title += (
-                " " + text
-            )
-
-        elif self.in_snippet:
-            self.current_snippet += (
-                " " + text
-            )
-
-    def handle_startendtag(
-        self,
-        tag,
-        attrs
-    ):
-        pass
-
-    def close_result(self):
-        title = " ".join(
-            self.current_title.split()
-        )
-
-        snippet = " ".join(
-            self.current_snippet.split()
-        )
-
-        url = self.current_url.strip()
-
-        if title and url:
-            self.results.append(
-                {
-                    "title": title,
-                    "url": url,
-                    "snippet": snippet,
-                }
-            )
-
-        self.in_result = False
-        self.in_title = False
-        self.in_snippet = False
-
-        self.title_depth = 0
-        self.snippet_depth = 0
-
-        self.current_title = ""
-        self.current_url = ""
-        self.current_snippet = ""
-
-    def get_results(self):
-        if self.in_result:
-            self.close_result()
-
-        return self.results
 
 
 class WebLearningEngine:
@@ -350,7 +182,8 @@ class WebLearningEngine:
                 "User-Agent": USER_AGENT,
                 "Accept": (
                     "text/html,application/xhtml+xml,"
-                    "application/xml;q=0.9,*/*;q=0.8"
+                    "application/xml;q=0.9,"
+                    "text/plain;q=0.8,*/*;q=0.7"
                 ),
             },
         )
@@ -370,8 +203,9 @@ class WebLearningEngine:
                     "text/html" not in content_type
                     and "application/xhtml+xml"
                     not in content_type
-                    and "text/plain"
-                    not in content_type
+                    and "text/plain" not in content_type
+                    and "application/xml" not in content_type
+                    and "text/xml" not in content_type
                 ):
                     return {
                         "status": "error",
@@ -687,6 +521,78 @@ class WebLearningEngine:
         if url.startswith("//"):
             url = "https:" + url
 
+        # Bing قد يعيد أحيانًا رابط تحويل من نوع /ck/a
+        # يحتوي على الرابط الحقيقي داخل معامل u.
+        try:
+            parsed = urlparse(url)
+
+            if (
+                parsed.hostname
+                and parsed.hostname.lower()
+                in {
+                    "www.bing.com",
+                    "bing.com",
+                }
+                and parsed.path.startswith("/ck/a")
+            ):
+                query = parse_qs(
+                    parsed.query
+                )
+
+                encoded_target = query.get(
+                    "u",
+                    [""]
+                )[0]
+
+                if encoded_target:
+                    decoded_target = unquote(
+                        encoded_target
+                    )
+
+                    if decoded_target.startswith(
+                        "a1"
+                    ):
+                        try:
+                            import base64
+
+                            padding = (
+                                "="
+                                * (
+                                    -len(
+                                        decoded_target[2:]
+                                    )
+                                    % 4
+                                )
+                            )
+
+                            decoded_bytes = (
+                                base64.urlsafe_b64decode(
+                                    decoded_target[2:]
+                                    + padding
+                                )
+                            )
+
+                            decoded_target = (
+                                decoded_bytes.decode(
+                                    "utf-8",
+                                    errors="ignore"
+                                )
+                            )
+
+                        except Exception:
+                            pass
+
+                    if decoded_target.startswith(
+                        (
+                            "http://",
+                            "https://",
+                        )
+                    ):
+                        return decoded_target
+
+        except Exception:
+            pass
+
         return url
 
     # ---------------------------------------------------------
@@ -706,8 +612,6 @@ class WebLearningEngine:
         if not query:
             return ""
 
-        # علامات الاستفهام والجمل الطويلة لا تضيف
-        # قيمة كبيرة إلى الاستعلام الآلي.
         punctuation = (
             "؟?!.,:;،؛"
         )
@@ -721,7 +625,6 @@ class WebLearningEngine:
         words = query.split()
 
         ignored_words = {
-            # Arabic question / linking words
             "ما",
             "ماذا",
             "ماهو",
@@ -740,7 +643,6 @@ class WebLearningEngine:
             "على",
             "الى",
             "إلى",
-            "من",
             "هذا",
             "هذه",
             "ذلك",
@@ -750,7 +652,6 @@ class WebLearningEngine:
             "أو",
             "مع",
 
-            # English question / linking words
             "what",
             "which",
             "who",
@@ -799,14 +700,90 @@ class WebLearningEngine:
                 cleaned_word
             )
 
-        # إذا كان السؤال قصيرًا جدًا، نستخدمه كما هو
-        # بدلًا من فقدان معلومات مهمة.
         if not meaningful_words:
             return query
 
         return " ".join(
             meaningful_words
         )
+
+    # ---------------------------------------------------------
+    # PARSE BING RSS
+    # ---------------------------------------------------------
+
+    def _parse_bing_rss(
+        self,
+        xml_data: str
+    ):
+        results = []
+
+        try:
+            root = ET.fromstring(
+                xml_data
+            )
+
+        except Exception:
+            return results
+
+        for item in root.iter():
+
+            tag_name = item.tag
+
+            if "}" in tag_name:
+                tag_name = tag_name.rsplit(
+                    "}",
+                    1
+                )[1]
+
+            if tag_name.lower() != "item":
+                continue
+
+            title = ""
+            url = ""
+            snippet = ""
+
+            for child in list(item):
+
+                child_name = child.tag
+
+                if "}" in child_name:
+                    child_name = child_name.rsplit(
+                        "}",
+                        1
+                    )[1]
+
+                child_name = child_name.lower()
+
+                value = (
+                    child.text
+                    or ""
+                ).strip()
+
+                if child_name == "title":
+                    title = value
+
+                elif child_name == "link":
+                    url = value
+
+                elif child_name == "description":
+                    snippet = value
+
+            if title and url:
+                results.append(
+                    {
+                        "title": title,
+                        "url": url,
+                        "snippet": snippet,
+                    }
+                )
+
+            if (
+                len(results)
+                >= MAX_SEARCH_RESULTS
+            ):
+                break
+
+        return results
 
     # ---------------------------------------------------------
     # SEARCH WEB
@@ -844,7 +821,7 @@ class WebLearningEngine:
             + urlencode(
                 {
                     "q": search_query,
-                    "form": "QBLH",
+                    "format": "rss",
                 }
             )
         )
@@ -854,8 +831,9 @@ class WebLearningEngine:
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": (
-                    "text/html,"
-                    "application/xhtml+xml"
+                    "application/rss+xml,"
+                    "application/xml,"
+                    "text/xml,*/*;q=0.8"
                 ),
                 "Accept-Language": (
                     "en-US,en;q=0.9"
@@ -881,7 +859,7 @@ class WebLearningEngine:
                     data
                 )
 
-                html = data.decode(
+                xml_text = data.decode(
                     charset,
                     errors="replace"
                 )
@@ -913,21 +891,9 @@ class WebLearningEngine:
                 ),
             }
 
-        parser = WebSearchExtractor()
-
-        try:
-            parser.feed(
-                html
-            )
-
-            parser.close()
-
-            search_results = (
-                parser.get_results()
-            )
-
-        except Exception:
-            search_results = []
+        search_results = self._parse_bing_rss(
+            xml_text
+        )
 
         normalized_results = []
 
