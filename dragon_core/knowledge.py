@@ -49,7 +49,6 @@ class KnowledgeBase:
 
     def search(self, query: str):
         query = query.lower().strip()
-        words = query.split()
 
         with self._lock:
             scored_results = []
@@ -60,9 +59,23 @@ class KnowledgeBase:
 
                 score = 0
 
+                # مطابقة العبارة كاملة مع العنوان
+                if query in title:
+                    score += 10
+
+                # مطابقة العبارة كاملة مع المحتوى
+                if query in content:
+                    score += 3
+
+                # مطابقة الكلمات المهمة فقط
+                words = [
+                    word for word in query.split()
+                    if len(word) > 2
+                ]
+
                 for word in words:
                     if word in title:
-                        score += 3
+                        score += 5
 
                     if word in content:
                         score += 1
