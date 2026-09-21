@@ -47,8 +47,51 @@ class KnowledgeBase:
         with self._lock:
             return list(self._items)
 
+    def _normalize_arabic(self, text: str) -> str:
+        text = text.lower().strip()
+
+        replacements = {
+            "أ": "ا",
+            "إ": "ا",
+            "آ": "ا",
+            "ة": "ه",
+            "ى": "ي",
+        }
+
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+        words = text.split()
+        normalized_words = []
+
+        prefixes = (
+            "وال",
+            "بال",
+            "كال",
+            "فال",
+            "لل",
+            "و",
+            "ف",
+            "ب",
+            "ك",
+            "ل",
+        )
+
+        for word in words:
+            for prefix in prefixes:
+                if word.startswith(prefix) and len(word) > len(prefix) + 2:
+                    word = word[len(prefix):]
+                    break
+
+            if word.startswith("ال") and len(word) > 4:
+                word = word[2:]
+
+            normalized_words.append(word)
+
+        return " ".join(normalized_words)
+
     def search(self, query: str):
-        query = query.lower().strip()
+        query = self._normalize_arabic(query)
 
         if not query:
             return []
@@ -62,17 +105,17 @@ class KnowledgeBase:
             "عن",
             "في",
             "على",
-            "إلى",
+            "الى",
             "هل",
             "و",
-            "أو",
+            "او",
             "مع",
             "هذا",
             "هذه",
             "ذلك",
             "تلك",
             "التي",
-            "الذي"
+            "الذي",
         }
 
         words = [
@@ -85,75 +128,21 @@ class KnowledgeBase:
             scored_results = []
 
             for item in self._items:
-                title = item.title.lower()
-                content = item.content.lower()
+                title = self._normalize_arabic(item.title)
+                content = self._normalize_arabic(item.content)
 
                 score = 0
                 matched_words = 0
 
-                # مطابقة السؤال كاملًا
                 if query in title:
                     score += 20
 
                 if query in content:
                     score += 5
 
-                # مطابقة الكلمات المهمة
                 for word in words:
                     if word in title:
                         score += 10
                         matched_words += 1
 
-                    elif word in content:
-                        score += 2
-                        matched_words += 1
-
-                if matched_words > 0 or query in title:
-                    scored_results.append(
-                        (
-                            score,
-                            matched_words,
-                            item
-                        )
-                    )
-
-            scored_results.sort(
-                key=lambda result: (
-                    result[0],
-                    result[1]
-                ),
-                reverse=True
-            )
-
-            return [
-                item
-                for score, matched_words, item
-                in scored_results
-            ]
-
-    def clear(self):
-        with self._lock:
-            self._items.clear()
-
-
-knowledge = KnowledgeBase()
-
-
-# ==============================
-# Scientific Knowledge
-# ==============================
-
-# Scientific fact
-knowledge.add(
-    "الخلية",
-    "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
-    "تختلف الخلايا في بنيتها ووظائفها، وتوجد خلايا بدائية النوى "
-    "وخلايا حقيقية النوى.",
-    "internal-scientific",
-    "fact"
-)
-
-
-# Scientific hypothesis
-knowledge.add(
-    "مث
+                    elif
