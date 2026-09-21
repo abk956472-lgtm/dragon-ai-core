@@ -1,940 +1,312 @@
 """
 DRAGON AI CORE
-Web Learning Engine
-
-يدعم:
-1. التعلم من رابط يحدده المستخدم.
-2. البحث التلقائي في الويب من السؤال.
-3. استخدام Bing RSS كمحرك البحث التلقائي.
-4. استخراج النص من صفحات الويب.
-5. التحقق الأساسي من عناوين URL لمنع الوصول إلى
-   العناوين المحلية والخاصة.
+Web Learning and Automatic Web Search
 """
 
-from html.parser import HTMLParser
-from ipaddress import ip_address
-from socket import gethostbyname
-from urllib.error import HTTPError, URLError
-from urllib.parse import (
-    urlencode,
-    urlparse,
-    parse_qs,
-    unquote,
-)
-from urllib.request import (
-    Request,
-    urlopen,
-)
+import base64
+import html
+import re
+import urllib.parse
 import xml.etree.ElementTree as ET
 
+import requests
 
-ALLOWED_SCHEMES = {"http", "https"}
-
-REQUEST_TIMEOUT = 15
-MAX_DOWNLOAD_BYTES = 2_000_000
-MAX_CONTENT_CHARS = 50_000
-
-MAX_SEARCH_RESULTS = 5
-MAX_SEARCH_SOURCES_TO_FETCH = 2
-MAX_SEARCH_CONTENT_CHARS = 12_000
 
 SEARCH_ENGINE_URL = "https://www.bing.com/search"
 
-USER_AGENT = (
-    "Mozilla/5.0 "
-    "(compatible; DRAGON-AI-CORE/1.0; +https://github.com/)"
-)
+REQUEST_TIMEOUT = 15
+
+MAX_RESULTS = 5
+
+MAX_CONTENT_LENGTH = 12000
 
 
-class WebTextExtractor(HTMLParser):
-    """
-    استخراج النص الظاهر من HTML.
-    """
-
-    SKIP_TAGS = {
-        "script",
-        "style",
-        "noscript",
-        "svg",
-        "canvas",
-        "iframe",
-    }
-
+class WebLearning:
     def __init__(self):
-        super().__init__()
+        self.session = requests.Session()
 
-        self.parts = []
-        self.skip_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-
-        if tag in self.SKIP_TAGS:
-            self.skip_depth += 1
-
-    def handle_endtag(self, tag):
-        tag = tag.lower()
-
-        if (
-            tag in self.SKIP_TAGS
-            and self.skip_depth > 0
-        ):
-            self.skip_depth -= 1
-
-    def handle_data(self, data):
-        if self.skip_depth > 0:
-            return
-
-        text = data.strip()
-
-        if text:
-            self.parts.append(text)
-
-    def get_text(self):
-        return " ".join(self.parts)
-
-
-class WebLearningEngine:
-    def __init__(self):
-        self.name = "Web Learning Engine"
-
-    # ---------------------------------------------------------
-    # URL VALIDATION
-    # ---------------------------------------------------------
-
-    def _validate_url(self, url: str):
-        if not url:
-            return False, "الرابط فارغ."
-
-        try:
-            parsed = urlparse(url)
-
-        except Exception:
-            return False, "تعذر تحليل الرابط."
-
-        if parsed.scheme.lower() not in ALLOWED_SCHEMES:
-            return False, "نوع الرابط غير مسموح."
-
-        if not parsed.hostname:
-            return False, (
-                "الرابط لا يحتوي على اسم نطاق صالح."
-            )
-
-        hostname = parsed.hostname.lower().strip()
-
-        blocked_hosts = {
-            "localhost",
-            "localhost.localdomain",
-        }
-
-        if hostname in blocked_hosts:
-            return False, (
-                "الوصول إلى العنوان المحلي غير مسموح."
-            )
-
-        try:
-            resolved_ip = gethostbyname(
-                hostname
-            )
-
-            ip = ip_address(
-                resolved_ip
-            )
-
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_reserved
-                or ip.is_multicast
-                or ip.is_unspecified
-            ):
-                return False, (
-                    "الوصول إلى عنوان شبكة "
-                    "خاص أو محلي غير مسموح."
-                )
-
-        except Exception:
-            return False, (
-                "تعذر التحقق من عنوان النطاق."
-            )
-
-        return True, None
-
-    # ---------------------------------------------------------
-    # FETCH URL
-    # ---------------------------------------------------------
-
-    def _fetch_url(self, url: str):
-        valid, error = self._validate_url(
-            url
-        )
-
-        if not valid:
-            return {
-                "status": "error",
-                "message": error,
-            }
-
-        request = Request(
-            url,
-            headers={
-                "User-Agent": USER_AGENT,
+        self.session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/131.0 Safari/537.36"
+                ),
                 "Accept": (
                     "text/html,application/xhtml+xml,"
-                    "application/xml;q=0.9,"
-                    "text/plain;q=0.8,*/*;q=0.7"
+                    "application/xml;q=0.9,*/*;q=0.8"
                 ),
-            },
-        )
-
-        try:
-            with urlopen(
-                request,
-                timeout=REQUEST_TIMEOUT
-            ) as response:
-
-                content_type = response.headers.get(
-                    "Content-Type",
-                    ""
-                ).lower()
-
-                if (
-                    "text/html" not in content_type
-                    and "application/xhtml+xml"
-                    not in content_type
-                    and "text/plain" not in content_type
-                    and "application/xml" not in content_type
-                    and "text/xml" not in content_type
-                ):
-                    return {
-                        "status": "error",
-                        "message": (
-                            "نوع المحتوى غير مدعوم."
-                        ),
-                    }
-
-                data = response.read(
-                    MAX_DOWNLOAD_BYTES + 1
-                )
-
-                if len(data) > MAX_DOWNLOAD_BYTES:
-                    return {
-                        "status": "error",
-                        "message": (
-                            "حجم الصفحة أكبر "
-                            "من الحد المسموح."
-                        ),
-                    }
-
-                charset = self._detect_charset(
-                    content_type,
-                    data
-                )
-
-                try:
-                    text = data.decode(
-                        charset,
-                        errors="replace"
-                    )
-
-                except Exception:
-                    text = data.decode(
-                        "utf-8",
-                        errors="replace"
-                    )
-
-                return {
-                    "status": "success",
-                    "url": response.geturl(),
-                    "content_type": content_type,
-                    "text": text,
-                }
-
-        except HTTPError as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"HTTP error: {exc.code}"
+                "Accept-Language": (
+                    "en-US,en;q=0.9,ar;q=0.8"
                 ),
             }
-
-        except URLError as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"تعذر الوصول إلى الرابط: "
-                    f"{exc.reason}"
-                ),
-            }
-
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"حدث خطأ أثناء تحميل الصفحة: "
-                    f"{exc}"
-                ),
-            }
-
-    # ---------------------------------------------------------
-    # CHARACTER ENCODING
-    # ---------------------------------------------------------
-
-    def _detect_charset(
-        self,
-        content_type: str,
-        data: bytes
-    ):
-        content_type_lower = (
-            content_type.lower()
         )
 
-        marker = "charset="
+    def _prepare_search_query(self, query: str) -> str:
+        """
+        تنظيف سؤال المستخدم قبل إرساله إلى محرك البحث.
+        """
 
-        if marker in content_type_lower:
-
-            charset = (
-                content_type_lower
-                .split(marker, 1)[1]
-                .split(";", 1)[0]
-                .strip()
-                .strip('"')
-                .strip("'")
-            )
-
-            if charset:
-                return charset
-
-        sample = data[:10_000].decode(
-            "ascii",
-            errors="ignore"
-        )
-
-        lower_sample = sample.lower()
-
-        marker = 'charset="'
-
-        if marker in lower_sample:
-
-            value = (
-                lower_sample
-                .split(marker, 1)[1]
-                .split('"', 1)[0]
-            )
-
-            if value:
-                return value
-
-        marker = "charset="
-
-        if marker in lower_sample:
-
-            value = (
-                lower_sample
-                .split(marker, 1)[1]
-                .split(">", 1)[0]
-                .split(";", 1)[0]
-                .split('"', 1)[0]
-                .strip()
-            )
-
-            if value:
-                return value
-
-        return "utf-8"
-
-    # ---------------------------------------------------------
-    # HTML EXTRACTION
-    # ---------------------------------------------------------
-
-    def _extract_text(
-        self,
-        html: str
-    ):
-        extractor = WebTextExtractor()
-
-        try:
-            extractor.feed(html)
-            extractor.close()
-
-            text = extractor.get_text()
-
-        except Exception:
-            text = html
-
-        return text
-
-    # ---------------------------------------------------------
-    # CLEAN CONTENT
-    # ---------------------------------------------------------
-
-    def _clean_content(
-        self,
-        content: str,
-        max_chars: int = MAX_CONTENT_CHARS
-    ):
-        lines = []
-
-        for line in content.splitlines():
-
-            cleaned = " ".join(
-                line.split()
-            )
-
-            if cleaned:
-                lines.append(
-                    cleaned
-                )
-
-        result = " ".join(
-            lines
-        )
-
-        if len(result) > max_chars:
-            result = result[:max_chars]
-
-        return result.strip()
-
-    # ---------------------------------------------------------
-    # PREPARE SOURCE
-    # ---------------------------------------------------------
-
-    def prepare_source(
-        self,
-        url: str,
-        max_chars: int = MAX_CONTENT_CHARS
-    ):
-        fetched = self._fetch_url(
-            url
-        )
-
-        if fetched.get("status") != "success":
-            return fetched
-
-        raw_text = fetched.get(
-            "text",
-            ""
-        )
-
-        content_type = fetched.get(
-            "content_type",
-            ""
-        ).lower()
-
-        if (
-            "text/html" in content_type
-            or "application/xhtml+xml"
-            in content_type
-        ):
-            extracted = self._extract_text(
-                raw_text
-            )
-
-        else:
-            extracted = raw_text
-
-        content = self._clean_content(
-            extracted,
-            max_chars=max_chars
-        )
-
-        if not content:
-            return {
-                "status": "error",
-                "message": (
-                    "لم يتم العثور على نص "
-                    "قابل للاستخراج."
-                ),
-                "url": fetched.get(
-                    "url",
-                    url
-                ),
-            }
-
-        return {
-            "status": "success",
-            "url": fetched.get(
-                "url",
-                url
-            ),
-            "content": content,
-        }
-
-    # ---------------------------------------------------------
-    # LEARN FROM URL
-    # ---------------------------------------------------------
-
-    def learn_from_url(
-        self,
-        url: str,
-        title: str,
-        knowledge_type: str = "fact",
-        confidence: str = "low"
-    ):
-        source = self.prepare_source(
-            url
-        )
-
-        if source.get(
-            "status"
-        ) != "success":
-
-            return {
-                "status": "error",
-                "message": source.get(
-                    "message",
-                    "فشل استخراج محتوى الرابط."
-                ),
-            }
-
-        content = source.get(
-            "content",
-            ""
-        )
-
-        return {
-            "status": "prepared",
-            "title": title,
-            "content": content,
-            "source": source.get(
-                "url",
-                url
-            ),
-            "knowledge_type": knowledge_type,
-            "confidence": confidence,
-        }
-
-    # ---------------------------------------------------------
-    # NORMALIZE SEARCH URL
-    # ---------------------------------------------------------
-
-    def _normalize_search_url(
-        self,
-        url: str
-    ):
-        url = url.strip()
-
-        if not url:
-            return ""
-
-        if url.startswith("//"):
-            url = "https:" + url
-
-        # Bing قد يعيد أحيانًا رابط تحويل من نوع /ck/a
-        # يحتوي على الرابط الحقيقي داخل معامل u.
-        try:
-            parsed = urlparse(url)
-
-            if (
-                parsed.hostname
-                and parsed.hostname.lower()
-                in {
-                    "www.bing.com",
-                    "bing.com",
-                }
-                and parsed.path.startswith("/ck/a")
-            ):
-                query = parse_qs(
-                    parsed.query
-                )
-
-                encoded_target = query.get(
-                    "u",
-                    [""]
-                )[0]
-
-                if encoded_target:
-                    decoded_target = unquote(
-                        encoded_target
-                    )
-
-                    if decoded_target.startswith(
-                        "a1"
-                    ):
-                        try:
-                            import base64
-
-                            padding = (
-                                "="
-                                * (
-                                    -len(
-                                        decoded_target[2:]
-                                    )
-                                    % 4
-                                )
-                            )
-
-                            decoded_bytes = (
-                                base64.urlsafe_b64decode(
-                                    decoded_target[2:]
-                                    + padding
-                                )
-                            )
-
-                            decoded_target = (
-                                decoded_bytes.decode(
-                                    "utf-8",
-                                    errors="ignore"
-                                )
-                            )
-
-                        except Exception:
-                            pass
-
-                    if decoded_target.startswith(
-                        (
-                            "http://",
-                            "https://",
-                        )
-                    ):
-                        return decoded_target
-
-        except Exception:
-            pass
-
-        return url
-
-    # ---------------------------------------------------------
-    # PREPARE SEARCH QUERY
-    # ---------------------------------------------------------
-
-    def _prepare_search_query(
-        self,
-        question: str
-    ):
-        query = " ".join(
-            str(question)
-            .strip()
-            .split()
-        )
+        query = str(query or "").strip()
 
         if not query:
             return ""
 
-        punctuation = (
-            "؟?!.,:;،؛"
+        # إزالة علامات الاستفهام والرموز الزائدة
+        query = re.sub(
+            r"[؟?!،؛,:]+",
+            " ",
+            query
         )
 
-        for mark in punctuation:
-            query = query.replace(
-                mark,
-                " "
+        # كلمات ربط شائعة لا تضيف قيمة كبيرة للبحث
+        stop_phrases = [
+            "ما هو",
+            "ما هي",
+            "من هو",
+            "من هي",
+            "ما آخر",
+            "ما هو آخر",
+            "ما هي آخر",
+            "ما اخر",
+            "ما هو اخر",
+            "ما هي اخر",
+            "اخبرني عن",
+            "أخبرني عن",
+            "هل يمكنك أن تخبرني عن",
+            "هل يمكنك ان تخبرني عن",
+            "tell me about",
+            "what is",
+            "what are",
+            "who is",
+            "who are",
+            "what's",
+            "whats",
+            "latest",
+        ]
+
+        cleaned = query
+
+        for phrase in stop_phrases:
+            cleaned = re.sub(
+                re.escape(phrase),
+                " ",
+                cleaned,
+                flags=re.IGNORECASE,
             )
 
-        words = query.split()
+        cleaned = re.sub(
+            r"\s+",
+            " ",
+            cleaned
+        ).strip()
 
-        ignored_words = {
-            "ما",
-            "ماذا",
-            "ماهو",
-            "ماهي",
-            "هل",
-            "هو",
-            "هي",
-            "من",
-            "متى",
-            "اين",
-            "أين",
-            "كيف",
-            "لماذا",
-            "عن",
-            "في",
-            "على",
-            "الى",
-            "إلى",
-            "هذا",
-            "هذه",
-            "ذلك",
-            "تلك",
-            "و",
-            "او",
-            "أو",
-            "مع",
-
-            "what",
-            "which",
-            "who",
-            "when",
-            "where",
-            "why",
-            "how",
-            "is",
-            "are",
-            "was",
-            "were",
-            "do",
-            "does",
-            "did",
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "of",
-            "to",
-            "in",
-            "on",
-            "for",
-            "with",
-            "about",
-            "from",
-            "by",
-        }
-
-        meaningful_words = []
-
-        for word in words:
-            cleaned_word = word.strip()
-
-            if not cleaned_word:
-                continue
-
-            if cleaned_word.lower() in ignored_words:
-                continue
-
-            if len(cleaned_word) <= 1:
-                continue
-
-            meaningful_words.append(
-                cleaned_word
-            )
-
-        if not meaningful_words:
+        # إذا أصبح السؤال فارغًا نعيد السؤال الأصلي
+        if not cleaned:
             return query
 
-        return " ".join(
-            meaningful_words
+        return cleaned
+
+    def _normalize_search_url(self, url: str) -> str:
+        """
+        تحويل روابط Bing الوسيطة إلى الرابط الحقيقي.
+        """
+
+        if not url:
+            return ""
+
+        url = html.unescape(url)
+        url = urllib.parse.unquote(url)
+
+        parsed = urllib.parse.urlparse(url)
+
+        # إذا كان الرابط رابط Bing redirect
+        if "bing.com" in parsed.netloc.lower():
+            query = urllib.parse.parse_qs(
+                parsed.query
+            )
+
+            # الطريقة الأولى
+            for key in ("u", "url", "r"):
+                values = query.get(key)
+
+                if values:
+                    candidate = values[0]
+
+                    if candidate.startswith("http"):
+                        return candidate
+
+                    decoded = self._decode_bing_url(
+                        candidate
+                    )
+
+                    if decoded:
+                        return decoded
+
+        return url
+
+    def _decode_bing_url(self, value: str) -> str:
+        """
+        محاولة فك بعض صيغ روابط Bing المختصرة.
+        """
+
+        if not value:
+            return ""
+
+        value = urllib.parse.unquote(value)
+
+        if value.startswith("http"):
+            return value
+
+        # صيغة a1 + Base64
+        if value.startswith("a1"):
+            encoded = value[2:]
+
+            try:
+                padding = "=" * (
+                    (-len(encoded)) % 4
+                )
+
+                decoded = base64.urlsafe_b64decode(
+                    encoded + padding
+                ).decode(
+                    "utf-8",
+                    errors="ignore"
+                )
+
+                match = re.search(
+                    r"https?://[^\s\"<>]+",
+                    decoded
+                )
+
+                if match:
+                    return match.group(0)
+
+            except Exception:
+                pass
+
+        return ""
+
+    def _valid_url(self, url: str) -> bool:
+        """
+        التحقق من أن الرابط صالح للتحميل.
+        """
+
+        if not url:
+            return False
+
+        try:
+            parsed = urllib.parse.urlparse(url)
+
+            return parsed.scheme in (
+                "http",
+                "https",
+            ) and bool(parsed.netloc)
+
+        except Exception:
+            return False
+
+    def _clean_text(self, text: str) -> str:
+        """
+        تنظيف النص المستخرج من HTML/XML.
+        """
+
+        if not text:
+            return ""
+
+        text = html.unescape(text)
+
+        # إزالة الوسوم
+        text = re.sub(
+            r"<[^>]+>",
+            " ",
+            text
         )
 
-    # ---------------------------------------------------------
-    # PARSE BING RSS
-    # ---------------------------------------------------------
+        # إزالة المسافات الزائدة
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        ).strip()
+
+        return text
 
     def _parse_bing_rss(
         self,
-        xml_data: str
+        xml_text: str
     ):
+        """
+        تحليل نتائج Bing RSS.
+        """
+
         results = []
+
+        if not xml_text:
+            return results
 
         try:
             root = ET.fromstring(
-                xml_data
+                xml_text
             )
 
-        except Exception:
+        except ET.ParseError:
             return results
 
-        for item in root.iter():
-
-            tag_name = item.tag
-
-            if "}" in tag_name:
-                tag_name = tag_name.rsplit(
-                    "}",
-                    1
-                )[1]
-
-            if tag_name.lower() != "item":
-                continue
-
-            title = ""
-            url = ""
-            snippet = ""
-
-            for child in list(item):
-
-                child_name = child.tag
-
-                if "}" in child_name:
-                    child_name = child_name.rsplit(
-                        "}",
-                        1
-                    )[1]
-
-                child_name = child_name.lower()
-
-                value = (
-                    child.text
-                    or ""
-                ).strip()
-
-                if child_name == "title":
-                    title = value
-
-                elif child_name == "link":
-                    url = value
-
-                elif child_name == "description":
-                    snippet = value
-
-            if title and url:
-                results.append(
-                    {
-                        "title": title,
-                        "url": url,
-                        "snippet": snippet,
-                    }
-                )
-
-            if (
-                len(results)
-                >= MAX_SEARCH_RESULTS
-            ):
-                break
-
-        return results
-
-    # ---------------------------------------------------------
-    # SEARCH WEB
-    # ---------------------------------------------------------
-
-    def search_web(
-        self,
-        question: str
-    ):
-        clean_question = " ".join(
-            str(question)
-            .strip()
-            .split()
-        )
-
-        if not clean_question:
-            return {
-                "status": "error",
-                "message": "السؤال فارغ.",
-            }
-
-        search_query = self._prepare_search_query(
-            clean_question
-        )
-
-        if not search_query:
-            return {
-                "status": "error",
-                "message": "تعذر تجهيز استعلام البحث.",
-            }
-
-        search_url = (
-            SEARCH_ENGINE_URL
-            + "?"
-            + urlencode(
-                {
-                    "q": search_query,
-                    "format": "rss",
-                }
+        for item in root.findall(
+            ".//item"
+        ):
+            title_element = item.find(
+                "title"
             )
-        )
 
-        request = Request(
-            search_url,
-            headers={
-                "User-Agent": USER_AGENT,
-                "Accept": (
-                    "application/rss+xml,"
-                    "application/xml,"
-                    "text/xml,*/*;q=0.8"
-                ),
-                "Accept-Language": (
-                    "en-US,en;q=0.9"
-                ),
-            },
-        )
+            link_element = item.find(
+                "link"
+            )
 
-        try:
-            with urlopen(
-                request,
-                timeout=REQUEST_TIMEOUT
-            ) as response:
+            description_element = item.find(
+                "description"
+            )
 
-                data = response.read(
-                    MAX_DOWNLOAD_BYTES
-                )
+            title = (
+                title_element.text
+                if title_element is not None
+                else ""
+            )
 
-                charset = self._detect_charset(
-                    response.headers.get(
-                        "Content-Type",
-                        ""
-                    ),
-                    data
-                )
+            url = (
+                link_element.text
+                if link_element is not None
+                else ""
+            )
 
-                xml_text = data.decode(
-                    charset,
-                    errors="replace"
-                )
+            snippet = (
+                description_element.text
+                if description_element is not None
+                else ""
+            )
 
-        except HTTPError as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"فشل البحث في الويب: "
-                    f"HTTP {exc.code}"
-                ),
-            }
-
-        except URLError as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"تعذر الاتصال بمحرك البحث: "
-                    f"{exc.reason}"
-                ),
-            }
-
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": (
-                    f"حدث خطأ أثناء البحث: "
-                    f"{exc}"
-                ),
-            }
-
-        search_results = self._parse_bing_rss(
-            xml_text
-        )
-
-        normalized_results = []
-
-        for item in search_results:
-
-            title = str(
-                item.get(
-                    "title",
-                    ""
-                )
-            ).strip()
-
-            snippet = str(
-                item.get(
-                    "snippet",
-                    ""
-                )
-            ).strip()
-
-            raw_url = str(
-                item.get(
-                    "url",
-                    ""
-                )
-            ).strip()
+            title = self._clean_text(
+                title
+            )
 
             url = self._normalize_search_url(
-                raw_url
+                url
+            )
+
+            snippet = self._clean_text(
+                snippet
             )
 
             if not title or not url:
                 continue
 
-            valid, _ = self._validate_url(
-                url
-            )
-
-            if not valid:
+            if not self._valid_url(url):
                 continue
 
-            normalized_results.append(
+            results.append(
                 {
                     "title": title,
                     "url": url,
@@ -942,65 +314,300 @@ class WebLearningEngine:
                 }
             )
 
-            if (
-                len(normalized_results)
-                >= MAX_SEARCH_RESULTS
-            ):
+            if len(results) >= MAX_RESULTS:
                 break
 
-        if not normalized_results:
-            return {
-                "status": "success",
-                "question": clean_question,
-                "search_query": search_query,
-                "results": [],
-                "source_count": 0,
-                "knowledge_saved": False,
-                "evidence_status": "unverified",
-            }
+        return results
 
-        final_results = []
+    def _extract_html_content(
+        self,
+        text: str
+    ) -> str:
+        """
+        استخراج نص بسيط من صفحة HTML.
+        """
 
-        for item in normalized_results[
-            :MAX_SEARCH_SOURCES_TO_FETCH
-        ]:
+        if not text:
+            return ""
 
-            source = self.prepare_source(
-                item["url"],
-                max_chars=MAX_SEARCH_CONTENT_CHARS
+        # حذف script
+        text = re.sub(
+            r"<script\b[^>]*>.*?</script>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # حذف style
+        text = re.sub(
+            r"<style\b[^>]*>.*?</style>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # حذف noscript
+        text = re.sub(
+            r"<noscript\b[^>]*>.*?</noscript>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # حذف جميع HTML tags
+        text = re.sub(
+            r"<[^>]+>",
+            " ",
+            text
+        )
+
+        text = html.unescape(
+            text
+        )
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        ).strip()
+
+        if len(text) > MAX_CONTENT_LENGTH:
+            text = text[
+                :MAX_CONTENT_LENGTH
+            ]
+
+        return text
+
+    def _fetch_page(
+        self,
+        url: str
+    ) -> str:
+        """
+        تحميل محتوى الصفحة.
+        """
+
+        try:
+            response = self.session.get(
+                url,
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True,
             )
 
-            content = ""
+            response.raise_for_status()
 
-            if source.get(
-                "status"
-            ) == "success":
+            content_type = (
+                response.headers.get(
+                    "Content-Type",
+                    ""
+                ).lower()
+            )
 
-                content = source.get(
-                    "content",
+            if (
+                "text/html" not in content_type
+                and "text/plain" not in content_type
+                and "application/xhtml+xml"
+                not in content_type
+            ):
+                return ""
+
+            return self._extract_html_content(
+                response.text
+            )
+
+        except requests.RequestException:
+            return ""
+
+        except Exception:
+            return ""
+
+    def search_web(
+        self,
+        query: str
+    ):
+        """
+        البحث التلقائي في الويب.
+        """
+
+        search_query = (
+            self._prepare_search_query(
+                query
+            )
+        )
+
+        if not search_query:
+            return {
+                "status": "error",
+                "message": "Empty search query.",
+                "results": [],
+            }
+
+        try:
+            response = self.session.get(
+                SEARCH_ENGINE_URL,
+                params={
+                    "q": search_query,
+                    "format": "rss",
+                },
+                headers={
+                    "Accept": (
+                        "application/rss+xml,"
+                        "application/xml,"
+                        "text/xml,"
+                        "*/*;q=0.8"
+                    ),
+                    "Accept-Language": (
+                        "en-US,en;q=0.9,ar;q=0.8"
+                    ),
+                },
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True,
+            )
+
+            response.raise_for_status()
+
+            xml_text = response.text
+
+            # TEMPORARY DEBUG
+            return {
+                "status": "debug",
+                "search_query": search_query,
+                "search_url": response.url,
+                "content_type": response.headers.get(
+                    "Content-Type",
+                    ""
+                ),
+                "response_preview": xml_text[:3000],
+            }
+
+            # لن نصل إلى هنا مؤقتًا.
+            # بعد انتهاء التشخيص نحذف كتلة debug.
+
+            results = self._parse_bing_rss(
+                xml_text
+            )
+
+            if not results:
+                return {
+                    "status": "empty",
+                    "search_query": search_query,
+                    "results": [],
+                    "message": (
+                        "No valid Bing RSS results."
+                    ),
+                }
+
+            final_results = []
+
+            for result in results:
+
+                title = result.get(
+                    "title",
                     ""
                 )
 
-            final_results.append(
-                {
-                    "title": item["title"],
-                    "url": item["url"],
-                    "snippet": item["snippet"],
-                    "content": content,
-                }
+                url = result.get(
+                    "url",
+                    ""
+                )
+
+                snippet = result.get(
+                    "snippet",
+                    ""
+                )
+
+                content = ""
+
+                if self._valid_url(url):
+                    content = self._fetch_page(
+                        url
+                    )
+
+                final_results.append(
+                    {
+                        "title": title,
+                        "url": url,
+                        "snippet": snippet,
+                        "content": content,
+                    }
+                )
+
+            return {
+                "status": "success",
+                "search_query": search_query,
+                "results": final_results,
+            }
+
+        except requests.Timeout:
+            return {
+                "status": "error",
+                "message": (
+                    "Web search timed out."
+                ),
+                "search_query": search_query,
+                "results": [],
+            }
+
+        except requests.RequestException as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"Web search request failed: "
+                    f"{str(exc)}"
+                ),
+                "search_query": search_query,
+                "results": [],
+            }
+
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"Web search failed: "
+                    f"{str(exc)}"
+                ),
+                "search_query": search_query,
+                "results": [],
+            }
+
+    def learn_from_url(
+        self,
+        url: str
+    ):
+        """
+        تعلم مباشر من رابط محدد.
+        """
+
+        if not self._valid_url(url):
+            return {
+                "status": "error",
+                "message": "Invalid URL.",
+            }
+
+        try:
+            content = self._fetch_page(
+                url
             )
 
-        return {
-            "status": "success",
-            "question": clean_question,
-            "search_query": search_query,
-            "results": final_results,
-            "source_count": len(
-                final_results
-            ),
-            "knowledge_saved": False,
-            "evidence_status": "unverified",
-        }
+            if not content:
+                return {
+                    "status": "error",
+                    "message": (
+                        "Could not extract "
+                        "content from URL."
+                    ),
+                }
+
+            return {
+                "status": "success",
+                "url": url,
+                "content": content,
+            }
+
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": str(exc),
+            }
 
 
-web_learning = WebLearningEngine()
+web_learning = WebLearning()
