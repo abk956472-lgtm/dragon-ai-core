@@ -1,3 +1,6 @@
+import os
+import requests
+
 from .memory import memory
 from .knowledge import knowledge
 from .security import security
@@ -11,6 +14,14 @@ from policies.scientific_policy import (
 )
 
 
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/"
+    "models/gemini-3.6-flash:generateContent"
+)
+
+GEMINI_TIMEOUT = 30
+
+
 class DragonEngine:
     """
     المحرك المركزي لـ DRAGON AI CORE.
@@ -21,6 +32,7 @@ class DragonEngine:
     - التعلم الذاتي
     - التعلم من الويب
     - البحث التلقائي في الويب
+    - معالجة نتائج الويب بواسطة Gemini
     - البحث في المعرفة
     - استرجاع الذاكرة العلمية
     - تطبيق السياسة العلمية
@@ -174,11 +186,13 @@ class DragonEngine:
         يبحث تلقائيًا في الويب عندما لا توجد معرفة داخلية كافية.
 
         المسار:
+
         السؤال
         -> Web Search
         -> استخراج المصادر
-        -> عرض النتائج
-        -> حفظ المعلومات في قاعدة المعرفة
+        -> معالجة النتائج بواسطة Gemini
+        -> بناء إجابة بلغة المستخدم
+        -> حفظ المصادر في قاعدة المعرفة
         -> حفظ الرد في الذاكرة العلمية
         """
 
@@ -201,7 +215,7 @@ class DragonEngine:
             return None
 
         saved_count = 0
-        response_sections = []
+        source_items = []
 
         for index, item in enumerate(
             results,
@@ -242,14 +256,16 @@ class DragonEngine:
             if not answer_text:
                 continue
 
-            response_sections.append(
-                f"المصدر {index}:\n"
-                f"{title}\n"
-                f"{answer_text}\n"
-                f"الرابط: {url}"
+            source_items.append(
+                {
+                    "index": index,
+                    "title": title,
+                    "url": url,
+                    "content": answer_text,
+                }
             )
 
-            # حفظ النتيجة في قاعدة المعرفة
+            # حفظ النتيجة الخام في قاعدة المعرفة.
             if title and url:
 
                 save_result = knowledge.learn(
@@ -267,14 +283,44 @@ class DragonEngine:
                 ):
                     saved_count += 1
 
-        if not response_sections:
+        if not source_items:
             return None
 
-        final_response = (
-            "بحثت تلقائيًا في الويب لأن قاعدة المعرفة "
-            "الحالية لم تحتوي على إجابة كافية.\n\n"
-            + "\n\n".join(response_sections)
-            + "\n\n"
+        # ======================================================
+        # Gemini Web Processing
+        # ======================================================
+
+        gemini_response = self._process_web_results_with_gemini(
+            question,
+            source_items
+        )
+
+        if gemini_response:
+
+            final_response = gemini_response
+
+        else:
+
+            # مسار احتياطي إذا لم يعمل Gemini.
+            response_sections = []
+
+            for item in source_items:
+
+                response_sections.append(
+                    f"المصدر {item['index']}:\n"
+                    f"{item['title']}\n"
+                    f"{item['content']}\n"
+                    f"الرابط: {item['url']}"
+                )
+
+            final_response = (
+                "بحثت تلقائيًا في الويب لأن قاعدة المعرفة "
+                "الحالية لم تحتوي على إجابة كافية.\n\n"
+                + "\n\n".join(response_sections)
+            )
+
+        final_response += (
+            "\n\n"
             "حالة الأدلة: معلومات مسترجعة من الويب "
             "ولم يتم التحقق منها علميًا بعد."
         )
@@ -305,9 +351,11 @@ class DragonEngine:
                 len(previous_memories),
             "web_search_used": True,
             "web_results":
-                len(response_sections),
+                len(source_items),
             "knowledge_saved":
                 saved_count,
+            "gemini_used":
+                bool(gemini_response),
             "evidence_status":
                 "web_unverified",
             "evidence_confidence":
@@ -319,6 +367,209 @@ class DragonEngine:
             "security_confirmation_required":
                 security.requires_confirmation()
         }
+
+    # ==========================================================
+    # Gemini Web Processing
+    # ==========================================================
+
+    def _process_web_results_with_gemini(
+        self,
+        question: str,
+        source_items
+    ):
+        """
+        يرسل نتائج البحث الموجودة بالفعل إلى Gemini
+        لكي يحولها إلى إجابة مفهومة بلغة المستخدم.
+
+        Gemini هنا لا يبحث في الويب.
+        DRAGON هو الذي يبحث، ثم Gemini يعالج النتائج.
+        """
+
+        api_key = os.getenv(
+            "GEMINI_API_KEY"
+        )
+
+        if not api_key:
+            return None
+
+        if not source_items:
+            return None
+
+        language_instruction = self._detect_response_language(
+            question
+        )
+
+        source_blocks = []
+
+        for item in source_items:
+
+            source_blocks.append(
+                (
+                    f"المصدر {item['index']}:\n"
+                    f"العنوان: {item['title']}\n"
+                    f"الرابط: {item['url']}\n"
+                    f"المحتوى:\n{item['content']}"
+                )
+            )
+
+        sources_text = "\n\n---\n\n".join(
+            source_blocks
+        )
+
+        prompt = f"""
+أنت وحدة معالجة المعرفة داخل نظام DRAGON AI CORE.
+
+مهمتك هي معالجة نتائج بحث الويب التي قدمها لك النظام
+والإجابة عن سؤال المستخدم اعتمادًا على هذه النتائج فقط.
+
+سؤال المستخدم:
+{question}
+
+لغة الإجابة المطلوبة:
+{language_instruction}
+
+القواعد الإلزامية:
+
+1. أجب بلغة سؤال المستخدم.
+2. إذا كان السؤال بالعربية، أجب بالعربية.
+3. لا تعرض نصوص صفحات الويب الخام كاملة.
+4. لخّص المعلومات المهمة واشرحها بوضوح.
+5. اجمع المعلومات المتوافقة بين المصادر.
+6. إذا اختلفت المصادر، اذكر وجود الاختلاف ولا تخترع حسمًا.
+7. لا تضف معلومة غير موجودة في المصادر المقدمة.
+8. لا تخترع أرقامًا أو تواريخ أو أسماء أو مصادر.
+9. لا تدّعي أن المعلومات مؤكدة علميًا.
+10. لا تستخدم معرفة Gemini الخارجية لتعويض نقص المصادر.
+11. اذكر المصادر المستخدمة في نهاية الإجابة.
+12. حافظ على الروابط كما وردت.
+13. اجعل الإجابة مباشرة ومنظمة.
+14. لا تقل إنك بحثت بنفسك في الإنترنت؛ البحث قام به DRAGON.
+15. لا تستخدم Markdown معقدًا. العناوين والنقاط البسيطة كافية.
+
+نتائج البحث:
+
+{sources_text}
+"""
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 1800
+            }
+        }
+
+        try:
+
+            response = requests.post(
+                GEMINI_API_URL,
+                headers={
+                    "x-goog-api-key": api_key,
+                    "Content-Type": "application/json"
+                },
+                json=payload,
+                timeout=GEMINI_TIMEOUT
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            candidates = data.get(
+                "candidates",
+                []
+            )
+
+            if not candidates:
+                return None
+
+            content = candidates[0].get(
+                "content",
+                {}
+            )
+
+            parts = content.get(
+                "parts",
+                []
+            )
+
+            generated_parts = []
+
+            for part in parts:
+
+                text = part.get(
+                    "text",
+                    ""
+                )
+
+                if text:
+                    generated_parts.append(
+                        str(text).strip()
+                    )
+
+            final_text = "\n".join(
+                part
+                for part in generated_parts
+                if part
+            ).strip()
+
+            if not final_text:
+                return None
+
+            return final_text
+
+        except requests.RequestException:
+            return None
+
+        except ValueError:
+            return None
+
+        except Exception:
+            return None
+
+    # ==========================================================
+    # Response Language Detection
+    # ==========================================================
+
+    def _detect_response_language(
+        self,
+        question: str
+    ) -> str:
+        """
+        يحدد لغة الإجابة المطلوبة من لغة سؤال المستخدم.
+        """
+
+        arabic_characters = 0
+        latin_characters = 0
+
+        for char in question:
+
+            if "\u0600" <= char <= "\u06ff":
+                arabic_characters += 1
+
+            elif (
+                "a" <= char.lower() <= "z"
+            ):
+                latin_characters += 1
+
+        if arabic_characters > latin_characters:
+            return "العربية"
+
+        if latin_characters > 0:
+            return (
+                "نفس لغة السؤال. "
+                "إذا كان السؤال بالإنجليزية فأجب بالإنجليزية."
+            )
+
+        return "لغة السؤال نفسها"
 
     # ==========================================================
     # Manual Learning
