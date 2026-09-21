@@ -20,6 +20,7 @@ class DragonEngine:
     - التعلم اليدوي
     - التعلم الذاتي
     - التعلم من الويب
+    - البحث التلقائي في الويب
     - البحث في المعرفة
     - استرجاع الذاكرة العلمية
     - تطبيق السياسة العلمية
@@ -90,6 +91,22 @@ class DragonEngine:
         previous_memories = memory.search_scientific(message)
 
         # ======================================================
+        # Automatic Web Search
+        # ======================================================
+
+        # إذا لم توجد معرفة داخلية كافية،
+        # يبحث DRAGON تلقائيًا في الويب.
+        if not knowledge_results:
+
+            web_result = self._process_automatic_web_search(
+                message,
+                previous_memories
+            )
+
+            if web_result is not None:
+                return web_result
+
+        # ======================================================
         # Response Generation
         # ======================================================
 
@@ -140,6 +157,165 @@ class DragonEngine:
                 evidence_evaluation["evidence_status"],
             "evidence_confidence":
                 evidence_evaluation["confidence"],
+            "security_confirmation_required":
+                security.requires_confirmation()
+        }
+
+    # ==========================================================
+    # Automatic Web Search
+    # ==========================================================
+
+    def _process_automatic_web_search(
+        self,
+        question: str,
+        previous_memories
+    ):
+        """
+        يبحث تلقائيًا في الويب عندما لا توجد معرفة داخلية كافية.
+
+        المسار:
+        السؤال
+        -> Web Search
+        -> استخراج المصادر
+        -> عرض النتائج
+        -> حفظ المعلومات في قاعدة المعرفة
+        -> حفظ الرد في الذاكرة العلمية
+        """
+
+        result = web_learning.search_web(
+            question
+        )
+
+        if not result:
+            return None
+
+        if result.get("status") != "success":
+            return None
+
+        results = result.get(
+            "results",
+            []
+        )
+
+        if not results:
+            return None
+
+        saved_count = 0
+        response_sections = []
+
+        for index, item in enumerate(
+            results,
+            start=1
+        ):
+
+            title = str(
+                item.get(
+                    "title",
+                    ""
+                )
+            ).strip()
+
+            url = str(
+                item.get(
+                    "url",
+                    ""
+                )
+            ).strip()
+
+            snippet = str(
+                item.get(
+                    "snippet",
+                    ""
+                )
+            ).strip()
+
+            content = str(
+                item.get(
+                    "content",
+                    ""
+                )
+            ).strip()
+
+            # نفضل محتوى الصفحة على نتيجة البحث المختصرة.
+            answer_text = content or snippet
+
+            if not answer_text:
+                continue
+
+            response_sections.append(
+                f"المصدر {index}:\n"
+                f"{title}\n"
+                f"{answer_text}\n"
+                f"الرابط: {url}"
+            )
+
+            # حفظ النتيجة في قاعدة المعرفة
+            if title and url:
+
+                save_result = knowledge.learn(
+                    title=title,
+                    content=answer_text,
+                    source=url,
+                    knowledge_type="web_unverified"
+                )
+
+                if save_result.get(
+                    "status"
+                ) in (
+                    "learned",
+                    "duplicate"
+                ):
+                    saved_count += 1
+
+        if not response_sections:
+            return None
+
+        final_response = (
+            "بحثت تلقائيًا في الويب لأن قاعدة المعرفة "
+            "الحالية لم تحتوي على إجابة كافية.\n\n"
+            + "\n\n".join(response_sections)
+            + "\n\n"
+            "حالة الأدلة: معلومات مسترجعة من الويب "
+            "ولم يتم التحقق منها علميًا بعد."
+        )
+
+        if previous_memories:
+
+            final_response += (
+                "\n\n"
+                + self._build_memory_response(
+                    previous_memories
+                )
+            )
+
+        # حفظ نتيجة البحث في الذاكرة العلمية
+        memory.add(
+            "assistant",
+            final_response,
+            memory_type="scientific",
+            evidence_status="web_unverified",
+            confidence="low"
+        )
+
+        return {
+            "status": "success",
+            "response": final_response,
+            "knowledge_matches": 0,
+            "scientific_memory_matches":
+                len(previous_memories),
+            "web_search_used": True,
+            "web_results":
+                len(response_sections),
+            "knowledge_saved":
+                saved_count,
+            "evidence_status":
+                "web_unverified",
+            "evidence_confidence":
+                "low",
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
             "security_confirmation_required":
                 security.requires_confirmation()
         }
@@ -715,6 +891,13 @@ class DragonEngine:
             policy_note = (
                 "الحالة العلمية: فرضية وليست حقيقة مثبتة، "
                 "وتحتاج إلى أدلة وتجارب للتحقق منها."
+            )
+
+        elif knowledge_type == "web_unverified":
+
+            policy_note = (
+                "الحالة العلمية: معلومات مسترجعة من الويب "
+                "ولم يتم التحقق منها علميًا بعد."
             )
 
         else:
