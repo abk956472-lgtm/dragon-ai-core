@@ -3,7 +3,7 @@ DRAGON AI CORE
 Scientific Intelligence Policy
 """
 
-SCIENTIFIC_POLICY_VERSION = "1.0.0"
+SCIENTIFIC_POLICY_VERSION = "1.1.0"
 
 
 SCIENTIFIC_RULES = [
@@ -26,3 +26,64 @@ def get_scientific_rules():
 
 def scientific_policy_version():
     return SCIENTIFIC_POLICY_VERSION
+
+
+def evaluate_evidence(
+    facts_count: int,
+    inference_count: int,
+    hypothesis_count: int
+) -> dict:
+    """
+    تقييم أولي لقوة الأدلة العلمية المتاحة.
+    هذا التقييم لا يثبت صحة أي استنتاج علمي.
+    """
+
+    if facts_count == 0:
+        return {
+            "evidence_status": "insufficient",
+            "confidence": "low",
+            "reason": (
+                "لا توجد حقائق مسجلة كافية لبناء "
+                "استنتاج علمي."
+            )
+        }
+
+    if hypothesis_count > 0 and facts_count == 1:
+        return {
+            "evidence_status": "limited",
+            "confidence": "low",
+            "reason": (
+                "توجد حقيقة واحدة مع فرضية، "
+                "وهذا لا يكفي لإثبات علاقة علمية جديدة."
+            )
+        }
+
+    if facts_count >= 2:
+        return {
+            "evidence_status": "available",
+            "confidence": "moderate",
+            "reason": (
+                "توجد عدة حقائق يمكن استخدامها "
+                "لبناء تحليل أولي، مع ضرورة التحقق "
+                "من العلاقة بينها."
+            )
+        }
+
+    if inference_count > 0:
+        return {
+            "evidence_status": "inference_only",
+            "confidence": "low",
+            "reason": (
+                "المعلومات تتضمن استنتاجات سابقة، "
+                "ولا ينبغي اعتبارها حقائق مستقلة."
+            )
+        }
+
+    return {
+        "evidence_status": "insufficient",
+        "confidence": "low",
+        "reason": (
+            "الأدلة الحالية غير كافية لإصدار "
+            "استنتاج علمي موثوق."
+        )
+    }
