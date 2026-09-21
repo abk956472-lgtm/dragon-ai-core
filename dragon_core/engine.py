@@ -31,7 +31,13 @@ class DragonEngine:
             knowledge_results
         )
 
-        memory.add("assistant", response)
+        memory.add(
+            "assistant",
+            response,
+            memory_type="scientific",
+            evidence_status=evidence_evaluation["evidence_status"],
+            confidence=evidence_evaluation["confidence"]
+        )
 
         return {
             "status": "success",
@@ -173,9 +179,4 @@ class DragonEngine:
         else:
             policy_note = (
                 "الحالة العلمية: نوع المعرفة غير معروف."
-            )
-
-        return f"{response}\n{policy_note}"
-
-
-dragon_engine = DragonEngine()
+        )
