@@ -72,7 +72,10 @@ class WebTextExtractor(HTMLParser):
     def handle_endtag(self, tag):
         tag = tag.lower()
 
-        if tag in self.SKIP_TAGS and self.skip_depth > 0:
+        if (
+            tag in self.SKIP_TAGS
+            and self.skip_depth > 0
+        ):
             self.skip_depth -= 1
 
     def handle_data(self, data):
@@ -107,30 +110,71 @@ class WebSearchExtractor(HTMLParser):
         self.in_snippet = False
 
     def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+
         attrs_dict = dict(attrs)
 
-        classes = attrs_dict.get("class", "")
+        classes = attrs_dict.get(
+            "class",
+            ""
+        )
 
-        if tag == "a" and "result__a" in classes:
+        class_names = set(
+            classes.split()
+        )
+
+        # --------------------------------------------------
+        # بداية نتيجة بحث جديدة
+        # --------------------------------------------------
+
+        if (
+            tag == "a"
+            and "result__a" in class_names
+        ):
+
+            # حفظ النتيجة السابقة أولًا
+            if self.in_result:
+                self.close_result()
+
             self.in_result = True
             self.in_title = True
+            self.in_snippet = False
 
             self.current_title = ""
             self.current_url = ""
             self.current_snippet = ""
 
-            href = attrs_dict.get("href", "")
-            self.current_url = href
+            self.current_url = attrs_dict.get(
+                "href",
+                ""
+            ).strip()
 
-        elif tag in {"a", "div"} and "result__snippet" in classes:
-            if self.in_result:
-                self.in_snippet = True
+            return
+
+        # --------------------------------------------------
+        # بداية النص المختصر
+        # --------------------------------------------------
+
+        if (
+            tag in {"a", "div"}
+            and "result__snippet" in class_names
+            and self.in_result
+        ):
+            self.in_snippet = True
 
     def handle_endtag(self, tag):
-        if tag == "a" and self.in_title:
+        tag = tag.lower()
+
+        if (
+            tag == "a"
+            and self.in_title
+        ):
             self.in_title = False
 
-        if tag == "div" and self.in_snippet:
+        if (
+            tag in {"a", "div"}
+            and self.in_snippet
+        ):
             self.in_snippet = False
 
     def handle_data(self, data):
@@ -140,17 +184,31 @@ class WebSearchExtractor(HTMLParser):
             return
 
         if self.in_title:
-            self.current_title += " " + text
+            self.current_title += (
+                " " + text
+            )
 
         elif self.in_snippet:
-            self.current_snippet += " " + text
+            self.current_snippet += (
+                " " + text
+            )
 
-    def handle_startendtag(self, tag, attrs):
+    def handle_startendtag(
+        self,
+        tag,
+        attrs
+    ):
         pass
 
     def close_result(self):
-        title = " ".join(self.current_title.split())
-        snippet = " ".join(self.current_snippet.split())
+        title = " ".join(
+            self.current_title.split()
+        )
+
+        snippet = " ".join(
+            self.current_snippet.split()
+        )
+
         url = self.current_url.strip()
 
         if title and url:
@@ -166,7 +224,12 @@ class WebSearchExtractor(HTMLParser):
         self.in_title = False
         self.in_snippet = False
 
+        self.current_title = ""
+        self.current_url = ""
+        self.current_snippet = ""
+
     def get_results(self):
+        # حفظ آخر نتيجة
         if self.in_result:
             self.close_result()
 
@@ -187,6 +250,7 @@ class WebLearningEngine:
 
         try:
             parsed = urlparse(url)
+
         except Exception:
             return False, "تعذر تحليل الرابط."
 
@@ -194,7 +258,9 @@ class WebLearningEngine:
             return False, "نوع الرابط غير مسموح."
 
         if not parsed.hostname:
-            return False, "الرابط لا يحتوي على اسم نطاق صالح."
+            return False, (
+                "الرابط لا يحتوي على اسم نطاق صالح."
+            )
 
         hostname = parsed.hostname.lower().strip()
 
@@ -204,11 +270,18 @@ class WebLearningEngine:
         }
 
         if hostname in blocked_hosts:
-            return False, "الوصول إلى العنوان المحلي غير مسموح."
+            return False, (
+                "الوصول إلى العنوان المحلي غير مسموح."
+            )
 
         try:
-            resolved_ip = gethostbyname(hostname)
-            ip = ip_address(resolved_ip)
+            resolved_ip = gethostbyname(
+                hostname
+            )
+
+            ip = ip_address(
+                resolved_ip
+            )
 
             if (
                 ip.is_private
@@ -218,10 +291,15 @@ class WebLearningEngine:
                 or ip.is_multicast
                 or ip.is_unspecified
             ):
-                return False, "الوصول إلى عنوان شبكة خاص أو محلي غير مسموح."
+                return False, (
+                    "الوصول إلى عنوان شبكة "
+                    "خاص أو محلي غير مسموح."
+                )
 
         except Exception:
-            return False, "تعذر التحقق من عنوان النطاق."
+            return False, (
+                "تعذر التحقق من عنوان النطاق."
+            )
 
         return True, None
 
@@ -230,7 +308,9 @@ class WebLearningEngine:
     # ---------------------------------------------------------
 
     def _fetch_url(self, url: str):
-        valid, error = self._validate_url(url)
+        valid, error = self._validate_url(
+            url
+        )
 
         if not valid:
             return {
@@ -262,8 +342,10 @@ class WebLearningEngine:
 
                 if (
                     "text/html" not in content_type
-                    and "application/xhtml+xml" not in content_type
-                    and "text/plain" not in content_type
+                    and "application/xhtml+xml"
+                    not in content_type
+                    and "text/plain"
+                    not in content_type
                 ):
                     return {
                         "status": "error",
@@ -280,7 +362,8 @@ class WebLearningEngine:
                     return {
                         "status": "error",
                         "message": (
-                            "حجم الصفحة أكبر من الحد المسموح."
+                            "حجم الصفحة أكبر "
+                            "من الحد المسموح."
                         ),
                     }
 
@@ -294,6 +377,7 @@ class WebLearningEngine:
                         charset,
                         errors="replace"
                     )
+
                 except Exception:
                     text = data.decode(
                         "utf-8",
@@ -319,7 +403,8 @@ class WebLearningEngine:
             return {
                 "status": "error",
                 "message": (
-                    f"تعذر الوصول إلى الرابط: {exc.reason}"
+                    f"تعذر الوصول إلى الرابط: "
+                    f"{exc.reason}"
                 ),
             }
 
@@ -327,7 +412,8 @@ class WebLearningEngine:
             return {
                 "status": "error",
                 "message": (
-                    f"حدث خطأ أثناء تحميل الصفحة: {exc}"
+                    f"حدث خطأ أثناء تحميل الصفحة: "
+                    f"{exc}"
                 ),
             }
 
@@ -340,11 +426,14 @@ class WebLearningEngine:
         content_type: str,
         data: bytes
     ):
-        content_type_lower = content_type.lower()
+        content_type_lower = (
+            content_type.lower()
+        )
 
         marker = "charset="
 
         if marker in content_type_lower:
+
             charset = (
                 content_type_lower
                 .split(marker, 1)[1]
@@ -367,13 +456,12 @@ class WebLearningEngine:
         marker = 'charset="'
 
         if marker in lower_sample:
-            value = lower_sample.split(
-                marker,
-                1
-            )[1].split(
-                '"',
-                1
-            )[0]
+
+            value = (
+                lower_sample
+                .split(marker, 1)[1]
+                .split('"', 1)[0]
+            )
 
             if value:
                 return value
@@ -381,19 +469,15 @@ class WebLearningEngine:
         marker = "charset="
 
         if marker in lower_sample:
-            value = lower_sample.split(
-                marker,
-                1
-            )[1].split(
-                ">",
-                1
-            )[0].split(
-                ";",
-                1
-            )[0].split(
-                '"',
-                1
-            )[0].strip()
+
+            value = (
+                lower_sample
+                .split(marker, 1)[1]
+                .split(">", 1)[0]
+                .split(";", 1)[0]
+                .split('"', 1)[0]
+                .strip()
+            )
 
             if value:
                 return value
@@ -404,7 +488,10 @@ class WebLearningEngine:
     # HTML EXTRACTION
     # ---------------------------------------------------------
 
-    def _extract_text(self, html: str):
+    def _extract_text(
+        self,
+        html: str
+    ):
         extractor = WebTextExtractor()
 
         try:
@@ -430,12 +517,19 @@ class WebLearningEngine:
         lines = []
 
         for line in content.splitlines():
-            cleaned = " ".join(line.split())
+
+            cleaned = " ".join(
+                line.split()
+            )
 
             if cleaned:
-                lines.append(cleaned)
+                lines.append(
+                    cleaned
+                )
 
-        result = " ".join(lines)
+        result = " ".join(
+            lines
+        )
 
         if len(result) > max_chars:
             result = result[:max_chars]
@@ -451,12 +545,17 @@ class WebLearningEngine:
         url: str,
         max_chars: int = MAX_CONTENT_CHARS
     ):
-        fetched = self._fetch_url(url)
+        fetched = self._fetch_url(
+            url
+        )
 
         if fetched.get("status") != "success":
             return fetched
 
-        raw_text = fetched.get("text", "")
+        raw_text = fetched.get(
+            "text",
+            ""
+        )
 
         content_type = fetched.get(
             "content_type",
@@ -465,11 +564,13 @@ class WebLearningEngine:
 
         if (
             "text/html" in content_type
-            or "application/xhtml+xml" in content_type
+            or "application/xhtml+xml"
+            in content_type
         ):
             extracted = self._extract_text(
                 raw_text
             )
+
         else:
             extracted = raw_text
 
@@ -482,14 +583,21 @@ class WebLearningEngine:
             return {
                 "status": "error",
                 "message": (
-                    "لم يتم العثور على نص قابل للاستخراج."
+                    "لم يتم العثور على نص "
+                    "قابل للاستخراج."
                 ),
-                "url": fetched.get("url", url),
+                "url": fetched.get(
+                    "url",
+                    url
+                ),
             }
 
         return {
             "status": "success",
-            "url": fetched.get("url", url),
+            "url": fetched.get(
+                "url",
+                url
+            ),
             "content": content,
         }
 
@@ -504,9 +612,14 @@ class WebLearningEngine:
         knowledge_type: str = "fact",
         confidence: str = "low"
     ):
-        source = self.prepare_source(url)
+        source = self.prepare_source(
+            url
+        )
 
-        if source.get("status") != "success":
+        if source.get(
+            "status"
+        ) != "success":
+
             return {
                 "status": "error",
                 "message": source.get(
@@ -548,7 +661,9 @@ class WebLearningEngine:
         if url.startswith("//"):
             url = "https:" + url
 
-        parsed = urlparse(url)
+        parsed = urlparse(
+            url
+        )
 
         query = parse_qs(
             parsed.query
@@ -567,7 +682,9 @@ class WebLearningEngine:
             )[0]
 
             if target:
-                return unquote(target)
+                return unquote(
+                    target
+                )
 
         return url
 
@@ -580,7 +697,9 @@ class WebLearningEngine:
         question: str
     ):
         clean_question = " ".join(
-            str(question).strip().split()
+            str(question)
+            .strip()
+            .split()
         )
 
         if not clean_question:
@@ -634,7 +753,8 @@ class WebLearningEngine:
             return {
                 "status": "error",
                 "message": (
-                    f"فشل البحث في الويب: HTTP {exc.code}"
+                    f"فشل البحث في الويب: "
+                    f"HTTP {exc.code}"
                 ),
             }
 
@@ -651,17 +771,23 @@ class WebLearningEngine:
             return {
                 "status": "error",
                 "message": (
-                    f"حدث خطأ أثناء البحث: {exc}"
+                    f"حدث خطأ أثناء البحث: "
+                    f"{exc}"
                 ),
             }
 
         parser = WebSearchExtractor()
 
         try:
-            parser.feed(html)
+            parser.feed(
+                html
+            )
+
             parser.close()
 
-            search_results = parser.get_results()
+            search_results = (
+                parser.get_results()
+            )
 
         except Exception:
             search_results = []
@@ -669,16 +795,26 @@ class WebLearningEngine:
         normalized_results = []
 
         for item in search_results:
+
             title = str(
-                item.get("title", "")
+                item.get(
+                    "title",
+                    ""
+                )
             ).strip()
 
             snippet = str(
-                item.get("snippet", "")
+                item.get(
+                    "snippet",
+                    ""
+                )
             ).strip()
 
             raw_url = str(
-                item.get("url", "")
+                item.get(
+                    "url",
+                    ""
+                )
             ).strip()
 
             url = self._normalize_search_url(
@@ -703,7 +839,10 @@ class WebLearningEngine:
                 }
             )
 
-            if len(normalized_results) >= MAX_SEARCH_RESULTS:
+            if (
+                len(normalized_results)
+                >= MAX_SEARCH_RESULTS
+            ):
                 break
 
         if not normalized_results:
@@ -729,7 +868,10 @@ class WebLearningEngine:
 
             content = ""
 
-            if source.get("status") == "success":
+            if source.get(
+                "status"
+            ) == "success":
+
                 content = source.get(
                     "content",
                     ""
@@ -748,7 +890,9 @@ class WebLearningEngine:
             "status": "success",
             "question": clean_question,
             "results": final_results,
-            "source_count": len(final_results),
+            "source_count": len(
+                final_results
+            ),
             "knowledge_saved": False,
             "evidence_status": "unverified",
         }
