@@ -138,3 +138,33 @@ class DragonEngine:
 
     def _apply_scientific_policy(
         self,
+        response: str,
+        knowledge_type: str
+    ):
+
+        if knowledge_type == "fact":
+            policy_note = (
+                "الحالة العلمية: حقيقة مسجلة في قاعدة المعرفة."
+            )
+
+        elif knowledge_type == "inference":
+            policy_note = (
+                "الحالة العلمية: استنتاج يعتمد على المعلومات "
+                "والبيانات المتاحة، وليس حقيقة عامة بالضرورة."
+            )
+
+        elif knowledge_type == "hypothesis":
+            policy_note = (
+                "الحالة العلمية: فرضية وليست حقيقة مثبتة، "
+                "وتحتاج إلى أدلة وتجارب للتحقق منها."
+            )
+
+        else:
+            policy_note = (
+                "الحالة العلمية: نوع المعرفة غير معروف."
+            )
+
+        return f"{response}\n{policy_note}"
+
+
+dragon_engine = DragonEngine()
