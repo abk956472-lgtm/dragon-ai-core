@@ -70,7 +70,7 @@ class KnowledgeBase:
 knowledge = KnowledgeBase()
 
 
-# Initial scientific knowledge
+# Scientific fact
 knowledge.add(
     "الخلية",
     "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
@@ -78,4 +78,15 @@ knowledge.add(
     "وخلايا حقيقية النوى.",
     "internal-scientific",
     "fact"
+)
+
+
+# Scientific hypothesis
+knowledge.add(
+    "مثال على فرضية علمية",
+    "هذه فرضية علمية توضيحية وليست حقيقة مثبتة: "
+    "قد يؤثر عامل بيئي معين في معدل نمو كائن حي، "
+    "لكن إثبات هذه الفرضية يتطلب تجارب وبيانات قابلة للتحقق.",
+    "internal-scientific",
+    "hypothesis"
 )
