@@ -1,7 +1,11 @@
 from .memory import memory
 from .knowledge import knowledge
 from .security import security
-from policies.scientific_policy import get_scientific_rules
+from policies.scientific_policy import (
+    get_scientific_rules,
+    evaluate_evidence,
+    scientific_policy_version,
+)
 
 
 class DragonEngine:
@@ -22,7 +26,7 @@ class DragonEngine:
 
         knowledge_results = knowledge.search(message)
 
-        response = self._generate_response(
+        response, evidence_evaluation = self._generate_response(
             message,
             knowledge_results
         )
@@ -33,18 +37,31 @@ class DragonEngine:
             "status": "success",
             "response": response,
             "knowledge_matches": len(knowledge_results),
-            "scientific_policy_version": "1.0.0",
-            "scientific_rules_active": len(self.scientific_rules),
+            "scientific_policy_version":
+                scientific_policy_version(),
+            "scientific_rules_active":
+                len(self.scientific_rules),
+            "evidence_status":
+                evidence_evaluation["evidence_status"],
+            "evidence_confidence":
+                evidence_evaluation["confidence"],
             "security_confirmation_required":
                 security.requires_confirmation()
         }
 
-    def _generate_response(self, message, knowledge_results):
+    def _generate_response(
+        self,
+        message,
+        knowledge_results
+    ):
         if not knowledge_results:
             return (
                 "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
                 "في قاعدة المعرفة."
-            )
+            ), {
+                "evidence_status": "insufficient",
+                "confidence": "low"
+            }
 
         if len(knowledge_results) == 1:
             result = knowledge_results[0]
@@ -55,17 +72,44 @@ class DragonEngine:
                 f"المصدر: {result.source}"
             )
 
-            return self._apply_scientific_policy(
+            response = self._apply_scientific_policy(
                 response,
                 result.knowledge_type
             )
 
+            evidence_evaluation = evaluate_evidence(
+                facts_count=1
+                if result.knowledge_type == "fact"
+                else 0,
+                inference_count=1
+                if result.knowledge_type == "inference"
+                else 0,
+                hypothesis_count=1
+                if result.knowledge_type == "hypothesis"
+                else 0
+            )
+
+            return response, evidence_evaluation
+
         sections = []
+
+        facts_count = 0
+        inference_count = 0
+        hypothesis_count = 0
 
         for index, result in enumerate(
             knowledge_results,
             start=1
         ):
+            if result.knowledge_type == "fact":
+                facts_count += 1
+
+            elif result.knowledge_type == "inference":
+                inference_count += 1
+
+            elif result.knowledge_type == "hypothesis":
+                hypothesis_count += 1
+
             sections.append(
                 f"المعلومة {index}:\n"
                 f"{result.content}\n"
@@ -73,75 +117,42 @@ class DragonEngine:
                 f"المصدر: {result.source}"
             )
 
-        evidence = "\n\n".join(sections)
-
-        inference = self._build_scientific_inference(
-            knowledge_results
+        evidence_evaluation = evaluate_evidence(
+            facts_count=facts_count,
+            inference_count=inference_count,
+            hypothesis_count=hypothesis_count
         )
 
-        return (
+        response = (
             "وجدت عدة معلومات مرتبطة بالسؤال:\n\n"
-            f"{evidence}\n\n"
-            f"{inference}"
+            + "\n\n".join(sections)
+            + "\n\n"
+            + self._build_scientific_assessment(
+                evidence_evaluation
+            )
         )
 
-    def _build_scientific_inference(
+        return response, evidence_evaluation
+
+    def _build_scientific_assessment(
         self,
-        knowledge_results
+        evidence_evaluation
     ):
-        facts = [
-            item
-            for item in knowledge_results
-            if item.knowledge_type == "fact"
-        ]
-
-        inferences = [
-            item
-            for item in knowledge_results
-            if item.knowledge_type == "inference"
-        ]
-
-        hypotheses = [
-            item
-            for item in knowledge_results
-            if item.knowledge_type == "hypothesis"
-        ]
-
-        parts = []
-
-        if facts:
-            parts.append(
-                "المعلومات المؤكدة المتاحة: "
-                f"{len(facts)} عنصر/عناصر."
-            )
-
-        if inferences:
-            parts.append(
-                "الاستنتاجات الموجودة مسبقًا: "
-                f"{len(inferences)} عنصر/عناصر."
-            )
-
-        if hypotheses:
-            parts.append(
-                "الفرضيات الموجودة: "
-                f"{len(hypotheses)} عنصر/عناصر."
-            )
-
-        parts.append(
-            "الاستنتاج العلمي الحالي: "
-            "المعلومات المسترجعة لا تكفي وحدها لإثبات "
-            "علاقة علمية جديدة بين هذه العناصر. "
-            "لذلك لا يتم تحويلها إلى حقيقة دون أدلة إضافية."
+        return (
+            "التقييم العلمي:\n"
+            f"حالة الأدلة: "
+            f"{evidence_evaluation['evidence_status']}\n"
+            f"درجة الثقة: "
+            f"{evidence_evaluation['confidence']}\n"
+            f"التفسير: "
+            f"{evidence_evaluation['reason']}"
         )
-
-        return "\n".join(parts)
 
     def _apply_scientific_policy(
         self,
         response: str,
         knowledge_type: str
     ):
-
         if knowledge_type == "fact":
             policy_note = (
                 "الحالة العلمية: حقيقة مسجلة في قاعدة المعرفة."
