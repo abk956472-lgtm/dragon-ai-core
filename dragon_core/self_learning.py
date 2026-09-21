@@ -3,22 +3,42 @@ DRAGON AI CORE
 Self Learning Engine
 
 محرك التعلّم الذاتي:
-- يستقبل المعرفة الجديدة.
-- يتحقق من سلامة المدخلات.
-- يصنف المعرفة.
-- يميز بين الحقيقة والاستنتاج والفرضية.
-- يمنع تمرير المعرفة غير الصالحة إلى قاعدة المعرفة.
-- يستخدم KnowledgeBase لحفظ المعرفة.
-- يحتفظ بسجل محلي لعمليات التعلم أثناء تشغيل العملية.
-- يجهز واجهة واضحة لإضافة مصادر خارجية مستقبلًا.
+
+الوظائف الحالية:
+- استقبال المعرفة الجديدة.
+- التحقق من سلامة المدخلات.
+- تصنيف المعرفة.
+- التمييز بين الحقيقة والاستنتاج والفرضية.
+- منع تمرير المعرفة غير الصالحة إلى قاعدة المعرفة.
+- استخدام KnowledgeBase لحفظ المعرفة.
+- الاحتفاظ بسجل محلي لعمليات التعلم أثناء التشغيل.
+
+الوظائف الجديدة:
+- تعريف هدف تعلم عام ومستمر.
+- إنشاء خطة تعلم قابلة للتوسع.
+- تتبع المجال والموضوع الحالي.
+- الانتقال بين موضوعات التعلم.
+- تسجيل حالة خطة التعلم.
+- تجهيز واجهة مستقبلية للبحث الذاتي في الإنترنت.
+
+ملاحظة:
+هذا الملف لا يبحث في الإنترنت بنفسه حتى الآن.
+البحث سيُربط لاحقًا بمحرك Web Learning.
 """
+
 
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+
 from .knowledge import knowledge
+
+
+# ==============================================================
+# Learning Data Models
+# ==============================================================
 
 
 @dataclass
@@ -50,14 +70,40 @@ class LearningRecord:
     created_at: str
 
 
+@dataclass
+class LearningTopic:
+    """
+    موضوع واحد داخل خطة التعلم.
+    """
+
+    topic: str
+    field: str
+    status: str = "pending"
+    priority: int = 0
+    notes: str = ""
+
+
+# ==============================================================
+# Self Learning Engine
+# ==============================================================
+
+
 class SelfLearningEngine:
     """
     المحرك المركزي للتعلّم الذاتي.
 
-    ملاحظة:
-    هذا المحرك لا يعتبر أي معلومة خارجية حقيقة تلقائيًا.
-    المصدر ونوع المعرفة وحالة الأدلة تبقى منفصلة.
+    المحرك مسؤول عن:
+    - استقبال المعرفة.
+    - التحقق منها قبل الحفظ.
+    - تسجيل عمليات التعلم.
+    - إدارة خطة التعلم المستمر.
+
+    لا يعتبر أي محتوى خارجي حقيقة مؤكدة تلقائيًا.
     """
+
+    # ==========================================================
+    # Knowledge Rules
+    # ==========================================================
 
     ALLOWED_TYPES = {
         "fact",
@@ -79,12 +125,100 @@ class SelfLearningEngine:
         "low",
     }
 
-    def __init__(self):
-        self._records: List[LearningRecord] = []
-        self._lock = Lock()
+    # ==========================================================
+    # Default Self Learning Goal
+    # ==========================================================
+
+    DEFAULT_LEARNING_GOAL = (
+        "التعلّم المستمر واكتساب المعرفة "
+        "من مصادر موثوقة ومسموح بها، "
+        "مع حفظ المصدر وتمييز حالة الأدلة."
+    )
 
     # ==========================================================
-    # Public API
+    # Initial Learning Roadmap
+    # ==========================================================
+
+    DEFAULT_LEARNING_PLAN = [
+        LearningTopic(
+            topic="أساسيات الذكاء الاصطناعي",
+            field="الذكاء الاصطناعي",
+            priority=1,
+        ),
+        LearningTopic(
+            topic="التعلم الآلي",
+            field="الذكاء الاصطناعي",
+            priority=2,
+        ),
+        LearningTopic(
+            topic="الشبكات العصبية",
+            field="الذكاء الاصطناعي",
+            priority=3,
+        ),
+        LearningTopic(
+            topic="التعلم العميق",
+            field="الذكاء الاصطناعي",
+            priority=4,
+        ),
+        LearningTopic(
+            topic="النماذج اللغوية الكبيرة",
+            field="الذكاء الاصطناعي",
+            priority=5,
+        ),
+        LearningTopic(
+            topic="الذكاء الاصطناعي التوليدي",
+            field="الذكاء الاصطناعي",
+            priority=6,
+        ),
+        LearningTopic(
+            topic="وكلاء الذكاء الاصطناعي",
+            field="الذكاء الاصطناعي",
+            priority=7,
+        ),
+    ]
+
+    # ==========================================================
+    # Initialization
+    # ==========================================================
+
+    def __init__(self):
+        self._records: List[LearningRecord] = []
+
+        self._learning_plan: List[LearningTopic] = []
+
+        self._learning_goal = self.DEFAULT_LEARNING_GOAL
+
+        self._current_field: Optional[str] = None
+
+        self._current_topic: Optional[str] = None
+
+        self._lock = Lock()
+
+        self._initialize_learning_plan()
+
+    # ==========================================================
+    # Learning Plan Initialization
+    # ==========================================================
+
+    def _initialize_learning_plan(self):
+        """
+        إنشاء نسخة مستقلة من خطة التعلم الافتراضية.
+        """
+
+        with self._lock:
+            self._learning_plan = [
+                LearningTopic(
+                    topic=item.topic,
+                    field=item.field,
+                    status=item.status,
+                    priority=item.priority,
+                    notes=item.notes,
+                )
+                for item in self.DEFAULT_LEARNING_PLAN
+            ]
+
+    # ==========================================================
+    # Public Learning API
     # ==========================================================
 
     def learn(
@@ -164,7 +298,7 @@ class SelfLearningEngine:
         )
 
     # ==========================================================
-    # Candidate creation
+    # Candidate Creation
     # ==========================================================
 
     def _build_candidate(
@@ -250,9 +384,7 @@ class SelfLearningEngine:
         ):
             return {
                 "valid": False,
-                "reason": (
-                    "Invalid evidence_status."
-                ),
+                "reason": "Invalid evidence_status.",
             }
 
         if candidate.confidence not in self.ALLOWED_CONFIDENCE:
@@ -329,7 +461,7 @@ class SelfLearningEngine:
         ).strip().lower()
 
     # ==========================================================
-    # Learning records
+    # Learning Records
     # ==========================================================
 
     def _record_result(
@@ -392,7 +524,7 @@ class SelfLearningEngine:
             self._records.clear()
 
     # ==========================================================
-    # Knowledge inspection
+    # Knowledge Inspection
     # ==========================================================
 
     def get_knowledge(self) -> list:
@@ -416,7 +548,7 @@ class SelfLearningEngine:
         return knowledge.search(query)
 
     # ==========================================================
-    # Candidate preparation
+    # Candidate Preparation
     # ==========================================================
 
     def prepare_candidate(
@@ -430,9 +562,6 @@ class SelfLearningEngine:
     ) -> dict:
         """
         تجهيز معلومة للتعلم دون حفظها.
-
-        هذه الخطوة مهمة مستقبلًا عند استقبال
-        المعلومات من الإنترنت أو مصادر خارجية.
         """
 
         candidate = self._build_candidate(
@@ -462,7 +591,7 @@ class SelfLearningEngine:
         }
 
     # ==========================================================
-    # External source interface
+    # External Source Interface
     # ==========================================================
 
     def learn_from_source(
@@ -477,11 +606,7 @@ class SelfLearningEngine:
         """
         نقطة دخول للمصادر الخارجية.
 
-        حاليًا لا يقوم هذا الأسلوب بجلب الإنترنت بنفسه.
-        بل يستقبل محتوى مصدر تم جمعه بالفعل.
-
-        لاحقًا يمكن ربطه بموصلات مصادر موثوقة
-        دون تغيير واجهة التعلم الأساسية.
+        يستقبل محتوى مصدر تم جمعه بالفعل.
         """
 
         return self.learn(
@@ -494,7 +619,312 @@ class SelfLearningEngine:
         )
 
     # ==========================================================
-    # Learning statistics
+    # Self Learning Goal
+    # ==========================================================
+
+    def get_learning_goal(self) -> str:
+        """
+        الحصول على الهدف العام للتعلم الذاتي.
+        """
+
+        with self._lock:
+            return self._learning_goal
+
+    def set_learning_goal(
+        self,
+        goal: str,
+    ) -> dict:
+        """
+        تغيير الهدف العام للتعلم الذاتي.
+        """
+
+        clean_goal = self._clean_text(goal)
+
+        if not clean_goal:
+            return {
+                "status": "rejected",
+                "reason": "Learning goal is required.",
+            }
+
+        with self._lock:
+            self._learning_goal = clean_goal
+
+        return {
+            "status": "updated",
+            "learning_goal": clean_goal,
+        }
+
+    # ==========================================================
+    # Learning Plan
+    # ==========================================================
+
+    def get_learning_plan(self) -> List[LearningTopic]:
+        """
+        الحصول على خطة التعلم الحالية.
+        """
+
+        with self._lock:
+            return list(self._learning_plan)
+
+    def add_learning_topic(
+        self,
+        topic: str,
+        field: str,
+        priority: int = 0,
+        notes: str = "",
+    ) -> dict:
+        """
+        إضافة موضوع جديد إلى خطة التعلم.
+        """
+
+        clean_topic = self._clean_text(topic)
+        clean_field = self._clean_text(field)
+        clean_notes = self._clean_text(notes)
+
+        if not clean_topic:
+            return {
+                "status": "rejected",
+                "reason": "Learning topic is required.",
+            }
+
+        if not clean_field:
+            return {
+                "status": "rejected",
+                "reason": "Learning field is required.",
+            }
+
+        try:
+            clean_priority = int(priority)
+        except (TypeError, ValueError):
+            clean_priority = 0
+
+        with self._lock:
+            for item in self._learning_plan:
+                if (
+                    item.topic == clean_topic
+                    and item.field == clean_field
+                ):
+                    return {
+                        "status": "duplicate",
+                        "reason": "Learning topic already exists.",
+                    }
+
+            item = LearningTopic(
+                topic=clean_topic,
+                field=clean_field,
+                priority=clean_priority,
+                notes=clean_notes,
+            )
+
+            self._learning_plan.append(item)
+
+        return {
+            "status": "added",
+            "topic": clean_topic,
+            "field": clean_field,
+            "priority": clean_priority,
+        }
+
+    # ==========================================================
+    # Current Learning Topic
+    # ==========================================================
+
+    def get_current_learning_topic(self) -> Optional[dict]:
+        """
+        الحصول على الموضوع الحالي الذي يجب أن يتعلمه DRAGON.
+        """
+
+        with self._lock:
+            for item in sorted(
+                self._learning_plan,
+                key=lambda topic: topic.priority
+            ):
+                if item.status == "pending":
+                    return {
+                        "topic": item.topic,
+                        "field": item.field,
+                        "status": item.status,
+                        "priority": item.priority,
+                        "notes": item.notes,
+                    }
+
+        return None
+
+    def start_next_learning_topic(self) -> dict:
+        """
+        اختيار أول موضوع لم يبدأ بعد.
+        """
+
+        with self._lock:
+            pending_topics = [
+                item
+                for item in self._learning_plan
+                if item.status == "pending"
+            ]
+
+            if not pending_topics:
+                return {
+                    "status": "completed",
+                    "message": "No pending learning topics.",
+                }
+
+            pending_topics.sort(
+                key=lambda item: item.priority
+            )
+
+            selected = pending_topics[0]
+
+            selected.status = "learning"
+
+            self._current_field = selected.field
+            self._current_topic = selected.topic
+
+            return {
+                "status": "started",
+                "topic": selected.topic,
+                "field": selected.field,
+                "priority": selected.priority,
+            }
+
+    def complete_current_learning_topic(
+        self,
+        notes: str = "",
+    ) -> dict:
+        """
+        إنهاء الموضوع الحالي.
+        """
+
+        clean_notes = self._clean_text(notes)
+
+        with self._lock:
+            if not self._current_topic:
+                return {
+                    "status": "error",
+                    "reason": "No active learning topic.",
+                }
+
+            for item in self._learning_plan:
+                if item.topic == self._current_topic:
+                    item.status = "completed"
+
+                    if clean_notes:
+                        item.notes = clean_notes
+
+                    completed_topic = item.topic
+
+                    self._current_topic = None
+                    self._current_field = None
+
+                    return {
+                        "status": "completed",
+                        "topic": completed_topic,
+                        "notes": item.notes,
+                    }
+
+        return {
+            "status": "error",
+            "reason": "Current learning topic was not found.",
+        }
+
+    # ==========================================================
+    # Learning Progress
+    # ==========================================================
+
+    def learning_progress(self) -> dict:
+        """
+        حساب تقدم خطة التعلم.
+        """
+
+        with self._lock:
+            total = len(self._learning_plan)
+
+            pending = sum(
+                1
+                for item in self._learning_plan
+                if item.status == "pending"
+            )
+
+            learning = sum(
+                1
+                for item in self._learning_plan
+                if item.status == "learning"
+            )
+
+            completed = sum(
+                1
+                for item in self._learning_plan
+                if item.status == "completed"
+            )
+
+            if total == 0:
+                percentage = 0.0
+            else:
+                percentage = (
+                    completed / total
+                ) * 100
+
+            return {
+                "learning_goal": self._learning_goal,
+                "total_topics": total,
+                "pending": pending,
+                "learning": learning,
+                "completed": completed,
+                "progress_percent": round(
+                    percentage,
+                    2,
+                ),
+                "current_field": self._current_field,
+                "current_topic": self._current_topic,
+            }
+
+    # ==========================================================
+    # Self Learning Decision Interface
+    # ==========================================================
+
+    def next_learning_action(self) -> dict:
+        """
+        تحديد الخطوة التالية في دورة التعلم.
+
+        هذه الواجهة لا تبحث في الإنترنت بعد.
+        هي فقط تحدد ما ينبغي فعله لاحقًا.
+        """
+
+        current = self.get_current_learning_topic()
+
+        if current:
+            return {
+                "action": "learn_current_topic",
+                "topic": current["topic"],
+                "field": current["field"],
+                "reason": (
+                    "يوجد موضوع تعلم نشط يحتاج إلى "
+                    "مصادر ومعرفة."
+                ),
+            }
+
+        next_topic = self.get_current_learning_topic()
+
+        if next_topic:
+            return {
+                "action": "start_next_topic",
+                "topic": next_topic["topic"],
+                "field": next_topic["field"],
+                "reason": (
+                    "لا يوجد موضوع نشط، ويوجد موضوع "
+                    "جديد في خطة التعلم."
+                ),
+            }
+
+        return {
+            "action": "learning_plan_completed",
+            "reason": (
+                "تم الانتهاء من جميع موضوعات خطة "
+                "التعلم الحالية."
+            ),
+        }
+
+    # ==========================================================
+    # Learning Statistics
     # ==========================================================
 
     def statistics(self) -> Dict[str, Any]:
@@ -534,7 +964,8 @@ class SelfLearningEngine:
 
 
 # ==============================================================
-# Global self-learning engine
+# Global Self Learning Engine
 # ==============================================================
+
 
 self_learning = SelfLearningEngine()
