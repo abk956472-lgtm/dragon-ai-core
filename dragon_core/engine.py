@@ -22,25 +22,54 @@ class DragonEngine:
                 "message": "Empty message."
             }
 
-        memory.add("user", message)
+        # حفظ سؤال المستخدم
+        memory.add(
+            "user",
+            message
+        )
 
+        # البحث في قاعدة المعرفة
         knowledge_results = knowledge.search(message)
 
+        # البحث في الذاكرة العلمية السابقة
         previous_memories = memory.search_scientific(message)
 
+        # توليد الرد
         response, evidence_evaluation = self._generate_response(
             message,
             knowledge_results,
             previous_memories
         )
 
-        memory.add(
-            "assistant",
-            response,
-            memory_type="scientific",
-            evidence_status=evidence_evaluation["evidence_status"],
-            confidence=evidence_evaluation["confidence"]
-        )
+        # ==================================================
+        # حفظ الرد العلمي الأساسي فقط
+        # لا نحفظ الجزء الذي يعرض الذاكرة السابقة
+        # ==================================================
+
+        memory_content = response
+
+        if previous_memories:
+            memory_marker = "\n\nمن الذاكرة العلمية السابقة:"
+
+            if memory_marker in memory_content:
+                memory_content = memory_content.split(
+                    memory_marker,
+                    1
+                )[0]
+
+        # لا نحفظ رد ذاكرة خالص كذاكرة علمية جديدة
+        if memory_content.strip():
+            memory.add(
+                "assistant",
+                memory_content,
+                memory_type="scientific",
+                evidence_status=evidence_evaluation[
+                    "evidence_status"
+                ],
+                confidence=evidence_evaluation[
+                    "confidence"
+                ]
+            )
 
         return {
             "status": "success",
@@ -65,6 +94,10 @@ class DragonEngine:
         knowledge_results,
         previous_memories
     ):
+        # ==================================================
+        # لا توجد معلومات في قاعدة المعرفة
+        # ==================================================
+
         if not knowledge_results:
             if previous_memories:
                 return (
@@ -84,6 +117,10 @@ class DragonEngine:
                 "evidence_status": "insufficient",
                 "confidence": "low"
             }
+
+        # ==================================================
+        # نتيجة معرفية واحدة
+        # ==================================================
 
         if len(knowledge_results) == 1:
             result = knowledge_results[0]
@@ -120,6 +157,10 @@ class DragonEngine:
                 )
 
             return response, evidence_evaluation
+
+        # ==================================================
+        # عدة نتائج معرفية
+        # ==================================================
 
         sections = []
 
@@ -176,6 +217,9 @@ class DragonEngine:
         self,
         previous_memories
     ):
+        if not previous_memories:
+            return ""
+
         latest_memory = previous_memories[-1]
 
         return (
