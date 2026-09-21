@@ -45,6 +45,7 @@ class DragonEngine:
 
             return (
                 f"{result.content}\n"
+                f"نوع المعرفة: {result.knowledge_type}\n"
                 f"المصدر: {result.source}"
             )
 
