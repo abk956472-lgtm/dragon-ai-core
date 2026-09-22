@@ -2,36 +2,43 @@
 DRAGON AI CORE
 Self Learning Engine
 
-محرك التعلّم الذاتي:
+محرك التعلّم الذاتي.
 
-الوظائف الحالية:
+المسؤوليات:
 - استقبال المعرفة الجديدة.
-- التحقق من سلامة المدخلات.
+- تنظيف والتحقق من المدخلات.
 - تصنيف المعرفة.
 - التمييز بين الحقيقة والاستنتاج والفرضية.
-- منع تمرير المعرفة غير الصالحة إلى قاعدة المعرفة.
-- استخدام KnowledgeBase لحفظ المعرفة.
-- الاحتفاظ بسجل محلي لعمليات التعلم أثناء التشغيل.
-
-الوظائف الجديدة:
-- تعريف هدف تعلم عام ومستمر.
-- إنشاء خطة تعلم قابلة للتوسع.
+- دعم المعرفة المسترجعة من الويب مع وسمها كغير متحقق منها.
+- تمرير المعرفة المقبولة إلى Knowledge Engine.
+- الاحتفاظ بسجل محلي لعمليات التعلم.
+- إدارة هدف التعلم.
+- إدارة خطة التعلم.
 - تتبع المجال والموضوع الحالي.
-- الانتقال بين موضوعات التعلم.
-- تسجيل حالة خطة التعلم.
-- تجهيز واجهة مستقبلية للبحث الذاتي في الإنترنت.
+- حساب تقدم التعلم.
+- تجهيز واجهة مستقبلية لمحرك Web Learning.
 
-ملاحظة:
-هذا الملف لا يبحث في الإنترنت بنفسه حتى الآن.
-البحث سيُربط لاحقًا بمحرك Web Learning.
+مهم:
+هذا الملف لا يبحث في الإنترنت بنفسه.
+
+البحث الخارجي مسؤولية:
+web_learning.py
+
+Knowledge Engine مسؤول عن:
+تخزين المعرفة.
+
+Memory Engine مسؤول عن:
+تخزين واسترجاع الذاكرة.
+
+Self Learning Engine مسؤول عن:
+دورة التعلم واتخاذ قرار التعلم،
+وليس تخزين الذاكرة الشخصية للمستخدم.
 """
-
 
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
 from typing import Any, Dict, List, Optional
-
 
 from .knowledge import knowledge
 
@@ -50,8 +57,11 @@ class LearningCandidate:
     title: str
     content: str
     source: str
+
     knowledge_type: str = "fact"
+
     evidence_status: str = "unverified"
+
     confidence: str = "low"
 
 
@@ -62,12 +72,20 @@ class LearningRecord:
     """
 
     title: str
+
     source: str
+
     knowledge_type: str
+
     status: str
+
     evidence_status: str
+
     confidence: str
+
     created_at: str
+
+    reason: Optional[str] = None
 
 
 @dataclass
@@ -77,9 +95,13 @@ class LearningTopic:
     """
 
     topic: str
+
     field: str
+
     status: str = "pending"
+
     priority: int = 0
+
     notes: str = ""
 
 
@@ -92,11 +114,16 @@ class SelfLearningEngine:
     """
     المحرك المركزي للتعلّم الذاتي.
 
-    المحرك مسؤول عن:
-    - استقبال المعرفة.
-    - التحقق منها قبل الحفظ.
-    - تسجيل عمليات التعلم.
-    - إدارة خطة التعلم المستمر.
+    مسؤول عن:
+
+    1. استقبال المعرفة.
+    2. إنشاء Learning Candidate.
+    3. التحقق من المعلومة.
+    4. تمرير المعرفة المقبولة إلى Knowledge Engine.
+    5. تسجيل نتيجة التعلم.
+    6. إدارة خطة التعلم.
+    7. تحديد الموضوع التالي.
+    8. تتبع تقدم التعلم.
 
     لا يعتبر أي محتوى خارجي حقيقة مؤكدة تلقائيًا.
     """
@@ -109,6 +136,7 @@ class SelfLearningEngine:
         "fact",
         "inference",
         "hypothesis",
+        "web_unverified",
     }
 
     ALLOWED_EVIDENCE_STATUS = {
@@ -126,7 +154,7 @@ class SelfLearningEngine:
     }
 
     # ==========================================================
-    # Default Self Learning Goal
+    # Default Learning Goal
     # ==========================================================
 
     DEFAULT_LEARNING_GOAL = (
@@ -182,15 +210,26 @@ class SelfLearningEngine:
     # ==========================================================
 
     def __init__(self):
-        self._records: List[LearningRecord] = []
 
-        self._learning_plan: List[LearningTopic] = []
+        self._records: List[
+            LearningRecord
+        ] = []
 
-        self._learning_goal = self.DEFAULT_LEARNING_GOAL
+        self._learning_plan: List[
+            LearningTopic
+        ] = []
 
-        self._current_field: Optional[str] = None
+        self._learning_goal = (
+            self.DEFAULT_LEARNING_GOAL
+        )
 
-        self._current_topic: Optional[str] = None
+        self._current_field: Optional[
+            str
+        ] = None
+
+        self._current_topic: Optional[
+            str
+        ] = None
 
         self._lock = Lock()
 
@@ -206,6 +245,7 @@ class SelfLearningEngine:
         """
 
         with self._lock:
+
             self._learning_plan = [
                 LearningTopic(
                     topic=item.topic,
@@ -233,7 +273,17 @@ class SelfLearningEngine:
         """
         استقبال معلومة ومحاولة تعلمها.
 
-        لا يتم الحفظ إلا بعد اجتياز التحقق الأساسي.
+        المسار:
+
+        Input
+          ↓
+        Candidate
+          ↓
+        Validation
+          ↓
+        Knowledge Engine
+          ↓
+        Learning Record
         """
 
         candidate = self._build_candidate(
@@ -245,25 +295,42 @@ class SelfLearningEngine:
             confidence=confidence,
         )
 
-        validation = self._validate_candidate(candidate)
+        validation = self._validate_candidate(
+            candidate
+        )
 
         if not validation["valid"]:
+
             return self._record_result(
                 candidate=candidate,
                 status="rejected",
                 reason=validation["reason"],
             )
 
-        result = knowledge.learn(
-            title=candidate.title,
-            content=candidate.content,
-            source=candidate.source,
-            knowledge_type=candidate.knowledge_type,
+        try:
+
+            result = knowledge.learn(
+                title=candidate.title,
+                content=candidate.content,
+                source=candidate.source,
+                knowledge_type=candidate.knowledge_type,
+            )
+
+        except Exception as error:
+
+            return self._record_result(
+                candidate=candidate,
+                status="error",
+                reason=f"Knowledge Engine error: {error}",
+            )
+
+        status = result.get(
+            "status",
+            "unknown"
         )
 
-        status = result.get("status", "unknown")
-
         if status == "learned":
+
             return self._record_result(
                 candidate=candidate,
                 status="learned",
@@ -271,6 +338,7 @@ class SelfLearningEngine:
             )
 
         if status == "duplicate":
+
             return self._record_result(
                 candidate=candidate,
                 status="duplicate",
@@ -278,6 +346,7 @@ class SelfLearningEngine:
             )
 
         if status == "rejected":
+
             return self._record_result(
                 candidate=candidate,
                 status="rejected",
@@ -285,6 +354,7 @@ class SelfLearningEngine:
             )
 
         if status == "error":
+
             return self._record_result(
                 candidate=candidate,
                 status="error",
@@ -314,20 +384,34 @@ class SelfLearningEngine:
         تنظيف المدخلات وبناء مرشح معرفة.
         """
 
-        clean_title = self._clean_text(title)
-        clean_content = self._clean_text(content)
-        clean_source = self._clean_text(source)
-
-        clean_type = self._normalize_knowledge_type(
-            knowledge_type
+        clean_title = self._clean_text(
+            title
         )
 
-        clean_evidence = self._normalize_evidence_status(
-            evidence_status
+        clean_content = self._clean_text(
+            content
         )
 
-        clean_confidence = self._normalize_confidence(
-            confidence
+        clean_source = self._clean_text(
+            source
+        )
+
+        clean_type = (
+            self._normalize_knowledge_type(
+                knowledge_type
+            )
+        )
+
+        clean_evidence = (
+            self._normalize_evidence_status(
+                evidence_status
+            )
+        )
+
+        clean_confidence = (
+            self._normalize_confidence(
+                confidence
+            )
         )
 
         return LearningCandidate(
@@ -352,29 +436,43 @@ class SelfLearningEngine:
         """
 
         if not candidate.title:
-            return {
-                "valid": False,
-                "reason": "Knowledge title is required.",
-            }
 
-        if not candidate.content:
-            return {
-                "valid": False,
-                "reason": "Knowledge content is required.",
-            }
-
-        if not candidate.source:
-            return {
-                "valid": False,
-                "reason": "Knowledge source is required.",
-            }
-
-        if candidate.knowledge_type not in self.ALLOWED_TYPES:
             return {
                 "valid": False,
                 "reason": (
-                    "knowledge_type must be fact, "
-                    "inference, or hypothesis."
+                    "Knowledge title is required."
+                ),
+            }
+
+        if not candidate.content:
+
+            return {
+                "valid": False,
+                "reason": (
+                    "Knowledge content is required."
+                ),
+            }
+
+        if not candidate.source:
+
+            return {
+                "valid": False,
+                "reason": (
+                    "Knowledge source is required."
+                ),
+            }
+
+        if (
+            candidate.knowledge_type
+            not in self.ALLOWED_TYPES
+        ):
+
+            return {
+                "valid": False,
+                "reason": (
+                    "knowledge_type must be "
+                    "fact, inference, hypothesis, "
+                    "or web_unverified."
                 ),
             }
 
@@ -382,12 +480,19 @@ class SelfLearningEngine:
             candidate.evidence_status
             not in self.ALLOWED_EVIDENCE_STATUS
         ):
+
             return {
                 "valid": False,
-                "reason": "Invalid evidence_status.",
+                "reason": (
+                    "Invalid evidence_status."
+                ),
             }
 
-        if candidate.confidence not in self.ALLOWED_CONFIDENCE:
+        if (
+            candidate.confidence
+            not in self.ALLOWED_CONFIDENCE
+        ):
+
             return {
                 "valid": False,
                 "reason": (
@@ -405,7 +510,10 @@ class SelfLearningEngine:
     # Normalization
     # ==========================================================
 
-    def _clean_text(self, value: Any) -> str:
+    def _clean_text(
+        self,
+        value: Any
+    ) -> str:
         """
         تحويل القيمة إلى نص وتنظيف المسافات.
         """
@@ -413,15 +521,14 @@ class SelfLearningEngine:
         if value is None:
             return ""
 
-        return str(value).strip()
+        return str(
+            value
+        ).strip()
 
     def _normalize_knowledge_type(
         self,
         knowledge_type: Any,
     ) -> str:
-        """
-        توحيد نوع المعرفة.
-        """
 
         if knowledge_type is None:
             return "fact"
@@ -434,9 +541,6 @@ class SelfLearningEngine:
         self,
         evidence_status: Any,
     ) -> str:
-        """
-        توحيد حالة الأدلة.
-        """
 
         if evidence_status is None:
             return "unverified"
@@ -449,9 +553,6 @@ class SelfLearningEngine:
         self,
         confidence: Any,
     ) -> str:
-        """
-        توحيد مستوى الثقة.
-        """
 
         if confidence is None:
             return "low"
@@ -472,7 +573,7 @@ class SelfLearningEngine:
         learning: Optional[dict] = None,
     ) -> dict:
         """
-        تسجيل نتيجة عملية التعلم وإرجاع نتيجة موحدة.
+        تسجيل نتيجة عملية التعلم.
         """
 
         record = LearningRecord(
@@ -483,18 +584,25 @@ class SelfLearningEngine:
             evidence_status=candidate.evidence_status,
             confidence=candidate.confidence,
             created_at=datetime.utcnow().isoformat(),
+            reason=reason,
         )
 
         with self._lock:
-            self._records.append(record)
+            self._records.append(
+                record
+            )
 
         response = {
             "status": status,
             "title": candidate.title,
-            "knowledge_type": candidate.knowledge_type,
-            "source": candidate.source,
-            "evidence_status": candidate.evidence_status,
-            "confidence": candidate.confidence,
+            "knowledge_type":
+                candidate.knowledge_type,
+            "source":
+                candidate.source,
+            "evidence_status":
+                candidate.evidence_status,
+            "confidence":
+                candidate.confidence,
         }
 
         if reason is not None:
@@ -505,19 +613,26 @@ class SelfLearningEngine:
 
         return response
 
-    def get_learning_records(self) -> List[LearningRecord]:
-        """
-        الحصول على سجل عمليات التعلم الحالية.
-        """
+    # ==========================================================
+    # Learning Records API
+    # ==========================================================
+
+    def get_learning_records(
+        self
+    ) -> List[LearningRecord]:
 
         with self._lock:
-            return list(self._records)
+            return list(
+                self._records
+            )
 
-    def clear_learning_records(self):
+    def clear_learning_records(
+        self
+    ):
         """
-        مسح سجل العمليات المحلي.
+        مسح سجل العمليات المحلي فقط.
 
-        لا يحذف أي معرفة من Supabase.
+        لا يحذف المعرفة من Supabase.
         """
 
         with self._lock:
@@ -527,10 +642,9 @@ class SelfLearningEngine:
     # Knowledge Inspection
     # ==========================================================
 
-    def get_knowledge(self) -> list:
-        """
-        الحصول على المعرفة الموجودة حاليًا.
-        """
+    def get_knowledge(
+        self
+    ) -> list:
 
         return knowledge.get_all()
 
@@ -538,14 +652,13 @@ class SelfLearningEngine:
         self,
         query: str,
     ) -> list:
-        """
-        البحث في قاعدة المعرفة قبل أو بعد التعلم.
-        """
 
         if not query:
             return []
 
-        return knowledge.search(query)
+        return knowledge.search(
+            query
+        )
 
     # ==========================================================
     # Candidate Preparation
@@ -573,20 +686,37 @@ class SelfLearningEngine:
             confidence=confidence,
         )
 
-        validation = self._validate_candidate(
-            candidate
+        validation = (
+            self._validate_candidate(
+                candidate
+            )
         )
 
         return {
-            "valid": validation["valid"],
-            "reason": validation["reason"],
+            "valid":
+                validation["valid"],
+
+            "reason":
+                validation["reason"],
+
             "candidate": {
-                "title": candidate.title,
-                "content": candidate.content,
-                "source": candidate.source,
-                "knowledge_type": candidate.knowledge_type,
-                "evidence_status": candidate.evidence_status,
-                "confidence": candidate.confidence,
+                "title":
+                    candidate.title,
+
+                "content":
+                    candidate.content,
+
+                "source":
+                    candidate.source,
+
+                "knowledge_type":
+                    candidate.knowledge_type,
+
+                "evidence_status":
+                    candidate.evidence_status,
+
+                "confidence":
+                    candidate.confidence,
             },
         }
 
@@ -606,7 +736,10 @@ class SelfLearningEngine:
         """
         نقطة دخول للمصادر الخارجية.
 
-        يستقبل محتوى مصدر تم جمعه بالفعل.
+        يستقبل محتوى تم جمعه بالفعل
+        من محرك خارجي مثل Web Learning.
+
+        لا يقوم بالبحث بنفسه.
         """
 
         return self.learn(
@@ -619,13 +752,12 @@ class SelfLearningEngine:
         )
 
     # ==========================================================
-    # Self Learning Goal
+    # Learning Goal
     # ==========================================================
 
-    def get_learning_goal(self) -> str:
-        """
-        الحصول على الهدف العام للتعلم الذاتي.
-        """
+    def get_learning_goal(
+        self
+    ) -> str:
 
         with self._lock:
             return self._learning_goal
@@ -634,16 +766,18 @@ class SelfLearningEngine:
         self,
         goal: str,
     ) -> dict:
-        """
-        تغيير الهدف العام للتعلم الذاتي.
-        """
 
-        clean_goal = self._clean_text(goal)
+        clean_goal = self._clean_text(
+            goal
+        )
 
         if not clean_goal:
+
             return {
                 "status": "rejected",
-                "reason": "Learning goal is required.",
+                "reason": (
+                    "Learning goal is required."
+                ),
             }
 
         with self._lock:
@@ -651,20 +785,22 @@ class SelfLearningEngine:
 
         return {
             "status": "updated",
-            "learning_goal": clean_goal,
+            "learning_goal":
+                clean_goal,
         }
 
     # ==========================================================
     # Learning Plan
     # ==========================================================
 
-    def get_learning_plan(self) -> List[LearningTopic]:
-        """
-        الحصول على خطة التعلم الحالية.
-        """
+    def get_learning_plan(
+        self
+    ) -> List[LearningTopic]:
 
         with self._lock:
-            return list(self._learning_plan)
+            return list(
+                self._learning_plan
+            )
 
     def add_learning_topic(
         self,
@@ -673,40 +809,61 @@ class SelfLearningEngine:
         priority: int = 0,
         notes: str = "",
     ) -> dict:
-        """
-        إضافة موضوع جديد إلى خطة التعلم.
-        """
 
-        clean_topic = self._clean_text(topic)
-        clean_field = self._clean_text(field)
-        clean_notes = self._clean_text(notes)
+        clean_topic = self._clean_text(
+            topic
+        )
+
+        clean_field = self._clean_text(
+            field
+        )
+
+        clean_notes = self._clean_text(
+            notes
+        )
 
         if not clean_topic:
+
             return {
                 "status": "rejected",
-                "reason": "Learning topic is required.",
+                "reason": (
+                    "Learning topic is required."
+                ),
             }
 
         if not clean_field:
+
             return {
                 "status": "rejected",
-                "reason": "Learning field is required.",
+                "reason": (
+                    "Learning field is required."
+                ),
             }
 
         try:
-            clean_priority = int(priority)
-        except (TypeError, ValueError):
+            clean_priority = int(
+                priority
+            )
+        except (
+            TypeError,
+            ValueError
+        ):
             clean_priority = 0
 
         with self._lock:
+
             for item in self._learning_plan:
+
                 if (
                     item.topic == clean_topic
                     and item.field == clean_field
                 ):
+
                     return {
                         "status": "duplicate",
-                        "reason": "Learning topic already exists.",
+                        "reason": (
+                            "Learning topic already exists."
+                        ),
                     }
 
             item = LearningTopic(
@@ -716,7 +873,9 @@ class SelfLearningEngine:
                 notes=clean_notes,
             )
 
-            self._learning_plan.append(item)
+            self._learning_plan.append(
+                item
+            )
 
         return {
             "status": "added",
@@ -729,33 +888,52 @@ class SelfLearningEngine:
     # Current Learning Topic
     # ==========================================================
 
-    def get_current_learning_topic(self) -> Optional[dict]:
-        """
-        الحصول على الموضوع الحالي الذي يجب أن يتعلمه DRAGON.
-        """
+    def get_current_learning_topic(
+        self
+    ) -> Optional[dict]:
 
         with self._lock:
+
             for item in sorted(
                 self._learning_plan,
-                key=lambda topic: topic.priority
+                key=lambda topic:
+                    topic.priority
             ):
-                if item.status == "pending":
+
+                if item.status == "learning":
+
                     return {
-                        "topic": item.topic,
-                        "field": item.field,
-                        "status": item.status,
-                        "priority": item.priority,
-                        "notes": item.notes,
+                        "topic":
+                            item.topic,
+
+                        "field":
+                            item.field,
+
+                        "status":
+                            item.status,
+
+                        "priority":
+                            item.priority,
+
+                        "notes":
+                            item.notes,
                     }
 
         return None
 
-    def start_next_learning_topic(self) -> dict:
+    # ==========================================================
+    # Next Pending Topic
+    # ==========================================================
+
+    def get_next_learning_topic(
+        self
+    ) -> Optional[dict]:
         """
-        اختيار أول موضوع لم يبدأ بعد.
+        الحصول على أول موضوع لم يبدأ بعد.
         """
 
         with self._lock:
+
             pending_topics = [
                 item
                 for item in self._learning_plan
@@ -763,202 +941,443 @@ class SelfLearningEngine:
             ]
 
             if not pending_topics:
+                return None
+
+            pending_topics.sort(
+                key=lambda item:
+                    item.priority
+            )
+
+            item = pending_topics[0]
+
+            return {
+                "topic":
+                    item.topic,
+
+                "field":
+                    item.field,
+
+                "status":
+                    item.status,
+
+                "priority":
+                    item.priority,
+
+                "notes":
+                    item.notes,
+            }
+
+    # ==========================================================
+    # Start Next Learning Topic
+    # ==========================================================
+
+    def start_next_learning_topic(
+        self
+    ) -> dict:
+
+        with self._lock:
+
+            pending_topics = [
+                item
+                for item in self._learning_plan
+                if item.status == "pending"
+            ]
+
+            if not pending_topics:
+
                 return {
-                    "status": "completed",
-                    "message": "No pending learning topics.",
+                    "status":
+                        "completed",
+
+                    "message":
+                        "No pending learning topics.",
                 }
 
             pending_topics.sort(
-                key=lambda item: item.priority
+                key=lambda item:
+                    item.priority
             )
 
-            selected = pending_topics[0]
+            selected = (
+                pending_topics[0]
+            )
 
             selected.status = "learning"
 
-            self._current_field = selected.field
-            self._current_topic = selected.topic
+            self._current_field = (
+                selected.field
+            )
+
+            self._current_topic = (
+                selected.topic
+            )
 
             return {
-                "status": "started",
-                "topic": selected.topic,
-                "field": selected.field,
-                "priority": selected.priority,
+                "status":
+                    "started",
+
+                "topic":
+                    selected.topic,
+
+                "field":
+                    selected.field,
+
+                "priority":
+                    selected.priority,
             }
+
+    # ==========================================================
+    # Complete Current Topic
+    # ==========================================================
 
     def complete_current_learning_topic(
         self,
         notes: str = "",
     ) -> dict:
-        """
-        إنهاء الموضوع الحالي.
-        """
 
-        clean_notes = self._clean_text(notes)
+        clean_notes = self._clean_text(
+            notes
+        )
 
         with self._lock:
+
             if not self._current_topic:
+
                 return {
                     "status": "error",
-                    "reason": "No active learning topic.",
+                    "reason": (
+                        "No active learning topic."
+                    ),
                 }
 
             for item in self._learning_plan:
-                if item.topic == self._current_topic:
+
+                if (
+                    item.topic
+                    == self._current_topic
+                ):
+
                     item.status = "completed"
 
                     if clean_notes:
                         item.notes = clean_notes
 
-                    completed_topic = item.topic
+                    completed_topic = (
+                        item.topic
+                    )
 
                     self._current_topic = None
                     self._current_field = None
 
                     return {
-                        "status": "completed",
-                        "topic": completed_topic,
-                        "notes": item.notes,
+                        "status":
+                            "completed",
+
+                        "topic":
+                            completed_topic,
+
+                        "notes":
+                            item.notes,
                     }
 
         return {
             "status": "error",
-            "reason": "Current learning topic was not found.",
+            "reason": (
+                "Current learning topic "
+                "was not found."
+            ),
+        }
+
+    # ==========================================================
+    # Reset Topic
+    # ==========================================================
+
+    def reset_learning_topic(
+        self,
+        topic: str
+    ) -> dict:
+        """
+        إعادة موضوع إلى pending.
+        """
+
+        clean_topic = self._clean_text(
+            topic
+        )
+
+        if not clean_topic:
+
+            return {
+                "status": "rejected",
+                "reason": (
+                    "Learning topic is required."
+                ),
+            }
+
+        with self._lock:
+
+            for item in self._learning_plan:
+
+                if item.topic == clean_topic:
+
+                    item.status = "pending"
+
+                    if (
+                        self._current_topic
+                        == clean_topic
+                    ):
+
+                        self._current_topic = None
+                        self._current_field = None
+
+                    return {
+                        "status":
+                            "reset",
+
+                        "topic":
+                            clean_topic,
+                    }
+
+        return {
+            "status": "not_found",
+            "reason": (
+                "Learning topic was not found."
+            ),
         }
 
     # ==========================================================
     # Learning Progress
     # ==========================================================
 
-    def learning_progress(self) -> dict:
-        """
-        حساب تقدم خطة التعلم.
-        """
+    def learning_progress(
+        self
+    ) -> dict:
 
         with self._lock:
-            total = len(self._learning_plan)
+
+            total = len(
+                self._learning_plan
+            )
 
             pending = sum(
                 1
-                for item in self._learning_plan
+                for item
+                in self._learning_plan
                 if item.status == "pending"
             )
 
             learning = sum(
                 1
-                for item in self._learning_plan
+                for item
+                in self._learning_plan
                 if item.status == "learning"
             )
 
             completed = sum(
                 1
-                for item in self._learning_plan
+                for item
+                in self._learning_plan
                 if item.status == "completed"
             )
 
             if total == 0:
+
                 percentage = 0.0
+
             else:
+
                 percentage = (
-                    completed / total
+                    completed
+                    / total
                 ) * 100
 
             return {
-                "learning_goal": self._learning_goal,
-                "total_topics": total,
-                "pending": pending,
-                "learning": learning,
-                "completed": completed,
-                "progress_percent": round(
-                    percentage,
-                    2,
-                ),
-                "current_field": self._current_field,
-                "current_topic": self._current_topic,
+                "learning_goal":
+                    self._learning_goal,
+
+                "total_topics":
+                    total,
+
+                "pending":
+                    pending,
+
+                "learning":
+                    learning,
+
+                "completed":
+                    completed,
+
+                "progress_percent":
+                    round(
+                        percentage,
+                        2
+                    ),
+
+                "current_field":
+                    self._current_field,
+
+                "current_topic":
+                    self._current_topic,
             }
 
     # ==========================================================
-    # Self Learning Decision Interface
+    # Next Learning Action
     # ==========================================================
 
-    def next_learning_action(self) -> dict:
+    def next_learning_action(
+        self
+    ) -> dict:
         """
         تحديد الخطوة التالية في دورة التعلم.
 
-        هذه الواجهة لا تبحث في الإنترنت بعد.
-        هي فقط تحدد ما ينبغي فعله لاحقًا.
+        لا يقوم بالبحث في الإنترنت.
         """
 
-        current = self.get_current_learning_topic()
+        current = (
+            self.get_current_learning_topic()
+        )
 
         if current:
+
             return {
-                "action": "learn_current_topic",
-                "topic": current["topic"],
-                "field": current["field"],
-                "reason": (
-                    "يوجد موضوع تعلم نشط يحتاج إلى "
-                    "مصادر ومعرفة."
-                ),
+                "action":
+                    "learn_current_topic",
+
+                "topic":
+                    current["topic"],
+
+                "field":
+                    current["field"],
+
+                "reason":
+                    (
+                        "يوجد موضوع تعلم نشط "
+                        "يحتاج إلى مصادر ومعرفة."
+                    ),
             }
 
-        next_topic = self.get_current_learning_topic()
+        next_topic = (
+            self.get_next_learning_topic()
+        )
 
         if next_topic:
+
             return {
-                "action": "start_next_topic",
-                "topic": next_topic["topic"],
-                "field": next_topic["field"],
-                "reason": (
-                    "لا يوجد موضوع نشط، ويوجد موضوع "
-                    "جديد في خطة التعلم."
-                ),
+                "action":
+                    "start_next_topic",
+
+                "topic":
+                    next_topic["topic"],
+
+                "field":
+                    next_topic["field"],
+
+                "reason":
+                    (
+                        "لا يوجد موضوع نشط، "
+                        "ويوجد موضوع جديد "
+                        "في خطة التعلم."
+                    ),
             }
 
         return {
-            "action": "learning_plan_completed",
-            "reason": (
-                "تم الانتهاء من جميع موضوعات خطة "
-                "التعلم الحالية."
-            ),
+            "action":
+                "learning_plan_completed",
+
+            "reason":
+                (
+                    "تم الانتهاء من جميع "
+                    "موضوعات خطة التعلم الحالية."
+                ),
         }
 
     # ==========================================================
     # Learning Statistics
     # ==========================================================
 
-    def statistics(self) -> Dict[str, Any]:
-        """
-        إحصائيات عمليات التعلم الحالية.
-        """
+    def statistics(
+        self
+    ) -> Dict[str, Any]:
 
         with self._lock:
-            records = list(self._records)
+            records = list(
+                self._records
+            )
 
         statistics = {
-            "total_learning_attempts": len(records),
-            "learned": 0,
-            "duplicate": 0,
-            "rejected": 0,
-            "error": 0,
-            "unknown": 0,
-            "facts": 0,
-            "inferences": 0,
-            "hypotheses": 0,
+            "total_learning_attempts":
+                len(records),
+
+            "learned":
+                0,
+
+            "duplicate":
+                0,
+
+            "rejected":
+                0,
+
+            "error":
+                0,
+
+            "unknown":
+                0,
+
+            "facts":
+                0,
+
+            "inferences":
+                0,
+
+            "hypotheses":
+                0,
+
+            "web_unverified":
+                0,
         }
 
         for record in records:
+
             if record.status in statistics:
-                statistics[record.status] += 1
 
-            if record.knowledge_type == "fact":
-                statistics["facts"] += 1
+                statistics[
+                    record.status
+                ] += 1
 
-            elif record.knowledge_type == "inference":
-                statistics["inferences"] += 1
+            if (
+                record.knowledge_type
+                == "fact"
+            ):
 
-            elif record.knowledge_type == "hypothesis":
-                statistics["hypotheses"] += 1
+                statistics[
+                    "facts"
+                ] += 1
+
+            elif (
+                record.knowledge_type
+                == "inference"
+            ):
+
+                statistics[
+                    "inferences"
+                ] += 1
+
+            elif (
+                record.knowledge_type
+                == "hypothesis"
+            ):
+
+                statistics[
+                    "hypotheses"
+                ] += 1
+
+            elif (
+                record.knowledge_type
+                == "web_unverified"
+            ):
+
+                statistics[
+                    "web_unverified"
+                ] += 1
 
         return statistics
 
