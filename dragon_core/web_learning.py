@@ -1,6 +1,19 @@
 """
 DRAGON AI CORE
 Web Learning and Automatic Web Search
+
+Responsibilities:
+- Web search
+- Search query preparation
+- Result relevance evaluation
+- Web page extraction
+- Evidence preparation
+- URL validation
+- Retry search
+- Source metadata
+
+This module does NOT directly store knowledge.
+Knowledge storage is handled by KnowledgeBase.
 """
 
 import base64
@@ -8,9 +21,14 @@ import html
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 
 import requests
 
+
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
 SEARCH_ENGINE_URL = "https://www.bing.com/search"
 
@@ -22,8 +40,17 @@ MAX_CONTENT_LENGTH = 12000
 
 MIN_RELEVANCE_SCORE = 2
 
+MAX_QUERY_LENGTH = 500
+
+MAX_URL_LENGTH = 2048
+
+
+# =========================================================
+# WEB LEARNING
+# =========================================================
 
 class WebLearning:
+
     def __init__(self):
         self.session = requests.Session()
 
@@ -43,6 +70,7 @@ class WebLearning:
                 "Accept-Language": (
                     "en-US,en;q=0.9,ar;q=0.8"
                 ),
+                "Connection": "keep-alive",
             }
         )
 
@@ -50,11 +78,18 @@ class WebLearning:
     # QUERY PREPARATION
     # =========================================================
 
-    def _prepare_search_query(self, query: str) -> str:
+    def _prepare_search_query(
+        self,
+        query: str
+    ) -> str:
+
         query = str(query or "").strip()
 
         if not query:
             return ""
+
+        if len(query) > MAX_QUERY_LENGTH:
+            query = query[:MAX_QUERY_LENGTH]
 
         query = re.sub(
             r"[؟?!،؛,:]+",
@@ -101,13 +136,16 @@ class WebLearning:
 
         return cleaned
 
-    def _build_retry_query(self, query: str) -> str:
+    def _build_retry_query(
+        self,
+        query: str
+    ) -> str:
         """
-        Build a second search query using the important
-        terms from the original query.
+        Build a second search query from important
+        terms in the original query.
 
-        We deliberately do NOT add arbitrary dates such
-        as "latest 2026".
+        No arbitrary dates or fabricated context
+        are added.
         """
 
         original_query = str(
@@ -149,8 +187,10 @@ class WebLearning:
             "ماهي",
             "ماهو",
             "آخر",
+            "اخر",
             "احدث",
             "أحدث",
+
             "latest",
             "what",
             "what's",
@@ -197,7 +237,11 @@ class WebLearning:
     # TEXT NORMALIZATION
     # =========================================================
 
-    def _normalize_text(self, text: str) -> str:
+    def _normalize_text(
+        self,
+        text: str
+    ) -> str:
+
         if not text:
             return ""
 
@@ -233,7 +277,10 @@ class WebLearning:
 
         return text
 
-    def _tokenize(self, text: str):
+    def _tokenize(
+        self,
+        text: str
+    ):
         normalized = self._normalize_text(
             text
         )
@@ -251,6 +298,7 @@ class WebLearning:
         self,
         query: str
     ):
+
         normalized = self._normalize_text(
             query
         )
@@ -282,6 +330,7 @@ class WebLearning:
             "سنة",
             "احدث",
             "أحدث",
+
             "latest",
             "what",
             "what's",
@@ -301,6 +350,7 @@ class WebLearning:
         terms = []
 
         for word in normalized.split():
+
             if len(word) <= 2:
                 continue
 
@@ -321,6 +371,7 @@ class WebLearning:
         terms,
         text
     ):
+
         tokens = set(
             self._tokenize(text)
         )
@@ -337,12 +388,14 @@ class WebLearning:
         result: dict
     ) -> int:
         """
-        Calculate relevance before accepting a web result.
+        Calculate relevance score.
 
-        Title matches receive the strongest weight.
-        Snippet matches receive medium weight.
-        Page content receives a smaller weight when
-        content is already available.
+        Weight:
+        - Exact phrase: strong
+        - Title: strong
+        - Snippet: medium
+        - Content: lower
+        - All terms matched: bonus
         """
 
         query_terms = self._get_query_terms(
@@ -388,9 +441,12 @@ class WebLearning:
                 snippet,
                 content,
             ]
-        )
+        ).strip()
 
-        # Exact phrase match.
+        # -----------------------------------------------------
+        # Exact phrase
+        # -----------------------------------------------------
+
         if (
             normalized_query
             and normalized_query in searchable_text
@@ -413,7 +469,10 @@ class WebLearning:
                 score += 1
                 matched_terms += 1
 
-        # Strong bonus when all query terms are found.
+        # -----------------------------------------------------
+        # All terms matched
+        # -----------------------------------------------------
+
         if matched_terms == len(query_terms):
             score += 4
 
@@ -425,13 +484,8 @@ class WebLearning:
         result: dict
     ) -> bool:
         """
-        Decide whether a result is sufficiently related.
-
-        The old implementation accepted a multi-word
-        query when only one word matched.
-
-        This implementation is stricter while still
-        allowing useful explanatory results.
+        Decide whether a web result is sufficiently
+        related to the requested query.
         """
 
         query_terms = self._get_query_terms(
@@ -469,8 +523,16 @@ class WebLearning:
             result
         )
 
+        # -----------------------------------------------------
+        # One-term query
+        # -----------------------------------------------------
+
         if len(query_terms) == 1:
             return score >= MIN_RELEVANCE_SCORE
+
+        # -----------------------------------------------------
+        # Term matches
+        # -----------------------------------------------------
 
         title_matches = self._count_term_matches(
             query_terms,
@@ -487,6 +549,10 @@ class WebLearning:
             content
         )
 
+        del title_matches
+        del snippet_matches
+        del content_matches
+
         total_matches = len(
             {
                 term
@@ -499,7 +565,10 @@ class WebLearning:
             }
         )
 
-        # Exact phrase is strong enough.
+        # -----------------------------------------------------
+        # Exact phrase
+        # -----------------------------------------------------
+
         normalized_query = self._normalize_text(
             query
         )
@@ -510,16 +579,20 @@ class WebLearning:
         ):
             return True
 
-        # Two-term query:
-        # normally require both terms.
+        # -----------------------------------------------------
+        # Two-term query
+        # -----------------------------------------------------
+
         if len(query_terms) == 2:
             return (
                 total_matches >= 2
                 and score >= MIN_RELEVANCE_SCORE
             )
 
-        # Longer query:
-        # require meaningful coverage.
+        # -----------------------------------------------------
+        # Longer query
+        # -----------------------------------------------------
+
         required_matches = max(
             2,
             (len(query_terms) + 1) // 2
@@ -535,12 +608,14 @@ class WebLearning:
         query: str,
         results
     ):
+
         if not results:
             return []
 
         scored_results = []
 
         for result in results:
+
             if not self._result_is_related(
                 query,
                 result
@@ -551,6 +626,10 @@ class WebLearning:
                 query,
                 result
             )
+
+            result = dict(result)
+
+            result["relevance_score"] = score
 
             scored_results.append(
                 (
@@ -578,6 +657,7 @@ class WebLearning:
         self,
         url: str
     ) -> str:
+
         if not url:
             return ""
 
@@ -589,6 +669,7 @@ class WebLearning:
         )
 
         if "bing.com" in parsed.netloc.lower():
+
             query = urllib.parse.parse_qs(
                 parsed.query
             )
@@ -596,13 +677,15 @@ class WebLearning:
             for key in (
                 "u",
                 "url",
-                "r"
+                "r",
             ):
+
                 values = query.get(
                     key
                 )
 
                 if values:
+
                     candidate = values[0]
 
                     if candidate.startswith(
@@ -625,6 +708,7 @@ class WebLearning:
         self,
         value: str
     ) -> str:
+
         if not value:
             return ""
 
@@ -636,9 +720,11 @@ class WebLearning:
             return value
 
         if value.startswith("a1"):
+
             encoded = value[2:]
 
             try:
+
                 padding = "=" * (
                     (-len(encoded)) % 4
                 )
@@ -670,16 +756,22 @@ class WebLearning:
         self,
         url: str
     ) -> bool:
+
         if not url:
             return False
 
+        if len(url) > MAX_URL_LENGTH:
+            return False
+
         try:
+
             parsed = urllib.parse.urlparse(
                 url
             )
 
             return (
-                parsed.scheme in (
+                parsed.scheme.lower()
+                in (
                     "http",
                     "https",
                 )
@@ -697,11 +789,12 @@ class WebLearning:
         self,
         text: str
     ) -> str:
+
         if not text:
             return ""
 
         text = html.unescape(
-            text
+            str(text)
         )
 
         text = re.sub(
@@ -726,12 +819,14 @@ class WebLearning:
         self,
         xml_text: str
     ):
+
         results = []
 
         if not xml_text:
             return results
 
         try:
+
             root = ET.fromstring(
                 xml_text
             )
@@ -742,6 +837,7 @@ class WebLearning:
         for item in root.findall(
             ".//item"
         ):
+
             title_element = item.find(
                 "title"
             )
@@ -795,6 +891,9 @@ class WebLearning:
                     "title": title,
                     "url": url,
                     "snippet": snippet,
+                    "content": "",
+                    "source_type": "web_search",
+                    "evidence_status": "web_unverified",
                 }
             )
 
@@ -811,8 +910,13 @@ class WebLearning:
         self,
         text: str
     ) -> str:
+
         if not text:
             return ""
+
+        # -----------------------------------------------------
+        # Remove scripts
+        # -----------------------------------------------------
 
         text = re.sub(
             r"<script\b[^>]*>.*?</script>",
@@ -824,6 +928,10 @@ class WebLearning:
             ),
         )
 
+        # -----------------------------------------------------
+        # Remove styles
+        # -----------------------------------------------------
+
         text = re.sub(
             r"<style\b[^>]*>.*?</style>",
             " ",
@@ -834,6 +942,10 @@ class WebLearning:
             ),
         )
 
+        # -----------------------------------------------------
+        # Remove noscript
+        # -----------------------------------------------------
+
         text = re.sub(
             r"<noscript\b[^>]*>.*?</noscript>",
             " ",
@@ -843,6 +955,10 @@ class WebLearning:
                 | re.DOTALL
             ),
         )
+
+        # -----------------------------------------------------
+        # Remove HTML tags
+        # -----------------------------------------------------
 
         text = re.sub(
             r"<[^>]+>",
@@ -871,7 +987,12 @@ class WebLearning:
         self,
         url: str
     ) -> str:
+
+        if not self._valid_url(url):
+            return ""
+
         try:
+
             response = self.session.get(
                 url,
                 timeout=REQUEST_TIMEOUT,
@@ -887,13 +1008,17 @@ class WebLearning:
                 ).lower()
             )
 
-            if (
-                "text/html"
-                not in content_type
-                and "text/plain"
-                not in content_type
-                and "application/xhtml+xml"
-                not in content_type
+            allowed_content = (
+                "text/html",
+                "text/plain",
+                "application/xhtml+xml",
+            )
+
+            if not any(
+                content_type.startswith(
+                    content
+                )
+                for content in allowed_content
             ):
                 return ""
 
@@ -915,6 +1040,7 @@ class WebLearning:
         self,
         search_query: str
     ):
+
         """
         Execute one Bing RSS search.
         """
@@ -953,14 +1079,16 @@ class WebLearning:
         self,
         results
     ):
+
         """
-        Fetch page content while preserving the
-        original search result structure.
+        Fetch page content while preserving
+        search metadata.
         """
 
         final_results = []
 
         for result in results:
+
             title = result.get(
                 "title",
                 ""
@@ -976,6 +1104,11 @@ class WebLearning:
                 ""
             )
 
+            relevance_score = result.get(
+                "relevance_score",
+                0
+            )
+
             content = ""
 
             if self._valid_url(url):
@@ -989,21 +1122,96 @@ class WebLearning:
                     "url": url,
                     "snippet": snippet,
                     "content": content,
+                    "relevance_score": (
+                        relevance_score
+                    ),
+                    "source_type": (
+                        result.get(
+                            "source_type",
+                            "web_search"
+                        )
+                    ),
+                    "evidence_status": (
+                        result.get(
+                            "evidence_status",
+                            "web_unverified"
+                        )
+                    ),
+                    "retrieved_at": (
+                        datetime.now(
+                            timezone.utc
+                        ).isoformat()
+                    ),
                 }
             )
 
         return final_results
 
+    # =========================================================
+    # POST-FETCH VALIDATION
+    # =========================================================
+
+    def _validate_completed_results(
+        self,
+        query: str,
+        results
+    ):
+
+        """
+        Re-check results after page content has been
+        downloaded.
+
+        This prevents a weak snippet from being treated
+        as strong evidence when the actual page content
+        is unrelated.
+        """
+
+        if not results:
+            return []
+
+        validated = []
+
+        for result in results:
+
+            if not self._result_is_related(
+                query,
+                result
+            ):
+                continue
+
+            result = dict(result)
+
+            result["relevance_score"] = (
+                self._score_result_relevance(
+                    query,
+                    result
+                )
+            )
+
+            validated.append(
+                result
+            )
+
+        validated.sort(
+            key=lambda item: item.get(
+                "relevance_score",
+                0
+            ),
+            reverse=True
+        )
+
+        return validated[:MAX_RESULTS]
+
     def search_web(
         self,
         query: str
     ):
+
         """
         Search the web and return only sufficiently
         relevant results.
 
-        IMPORTANT:
-        Unrelated search results are never returned as
+        Unrelated results are never returned as
         a fallback.
         """
 
@@ -1023,9 +1231,10 @@ class WebLearning:
             }
 
         try:
-            # -------------------------------------------------
+
+            # =================================================
             # FIRST SEARCH
-            # -------------------------------------------------
+            # =================================================
 
             first_results = (
                 self._perform_search(
@@ -1034,6 +1243,7 @@ class WebLearning:
             )
 
             if first_results:
+
                 related_results = (
                     self._filter_obviously_unrelated_results(
                         search_query,
@@ -1042,22 +1252,36 @@ class WebLearning:
                 )
 
                 if related_results:
+
                     final_results = (
                         self._complete_results(
                             related_results
                         )
                     )
 
-                    return {
-                        "status": "success",
-                        "search_query": search_query,
-                        "results": final_results,
-                        "retry_used": False,
-                    }
+                    final_results = (
+                        self._validate_completed_results(
+                            search_query,
+                            final_results
+                        )
+                    )
 
-            # -------------------------------------------------
+                    if final_results:
+
+                        return {
+                            "status": "success",
+                            "search_query": (
+                                search_query
+                            ),
+                            "results": (
+                                final_results
+                            ),
+                            "retry_used": False,
+                        }
+
+            # =================================================
             # RETRY SEARCH
-            # -------------------------------------------------
+            # =================================================
 
             retry_query = (
                 self._build_retry_query(
@@ -1070,6 +1294,7 @@ class WebLearning:
                 and retry_query.lower()
                 != search_query.lower()
             ):
+
                 retry_results = (
                     self._perform_search(
                         retry_query
@@ -1077,6 +1302,7 @@ class WebLearning:
                 )
 
                 if retry_results:
+
                     retry_related_results = (
                         self._filter_obviously_unrelated_results(
                             retry_query,
@@ -1085,25 +1311,39 @@ class WebLearning:
                     )
 
                     if retry_related_results:
+
                         final_results = (
                             self._complete_results(
                                 retry_related_results
                             )
                         )
 
-                        return {
-                            "status": "success",
-                            "search_query": retry_query,
-                            "original_search_query": (
-                                search_query
-                            ),
-                            "retry_used": True,
-                            "results": final_results,
-                        }
+                        final_results = (
+                            self._validate_completed_results(
+                                retry_query,
+                                final_results
+                            )
+                        )
 
-            # -------------------------------------------------
+                        if final_results:
+
+                            return {
+                                "status": "success",
+                                "search_query": (
+                                    retry_query
+                                ),
+                                "original_search_query": (
+                                    search_query
+                                ),
+                                "retry_used": True,
+                                "results": (
+                                    final_results
+                                ),
+                            }
+
+            # =================================================
             # NO RELEVANT RESULTS
-            # -------------------------------------------------
+            # =================================================
 
             return {
                 "status": "empty",
@@ -1116,6 +1356,7 @@ class WebLearning:
             }
 
         except requests.Timeout:
+
             return {
                 "status": "error",
                 "message": (
@@ -1126,6 +1367,7 @@ class WebLearning:
             }
 
         except requests.RequestException as exc:
+
             return {
                 "status": "error",
                 "message": (
@@ -1137,6 +1379,7 @@ class WebLearning:
             }
 
         except Exception as exc:
+
             return {
                 "status": "error",
                 "message": (
@@ -1158,18 +1401,22 @@ class WebLearning:
         knowledge_type=None,
         confidence=None
     ):
+
         if not self._valid_url(url):
+
             return {
                 "status": "error",
                 "message": "Invalid URL.",
             }
 
         try:
+
             content = self._fetch_page(
                 url
             )
 
             if not content:
+
                 return {
                     "status": "error",
                     "message": (
@@ -1182,16 +1429,142 @@ class WebLearning:
                 "status": "success",
                 "url": url,
                 "title": title,
-                "knowledge_type": knowledge_type,
+                "knowledge_type": (
+                    knowledge_type
+                ),
                 "confidence": confidence,
+                "evidence_status": (
+                    "web_unverified"
+                ),
+                "source_type": (
+                    "direct_url"
+                ),
+                "retrieved_at": (
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                ),
                 "content": content,
             }
 
         except Exception as exc:
+
             return {
                 "status": "error",
                 "message": str(exc),
             }
 
+    # =========================================================
+    # EVIDENCE EXTRACTION
+    # =========================================================
+
+    def prepare_evidence(
+        self,
+        result: dict
+    ) -> dict:
+        """
+        Convert a web result into a clean evidence
+        object for DragonEngine / KnowledgeBase.
+
+        This function does NOT store anything.
+        """
+
+        if not isinstance(
+            result,
+            dict
+        ):
+            return {
+                "status": "error",
+                "message": (
+                    "Invalid web result."
+                ),
+            }
+
+        title = str(
+            result.get(
+                "title",
+                ""
+            )
+        ).strip()
+
+        url = str(
+            result.get(
+                "url",
+                ""
+            )
+        ).strip()
+
+        snippet = str(
+            result.get(
+                "snippet",
+                ""
+            )
+        ).strip()
+
+        content = str(
+            result.get(
+                "content",
+                ""
+            )
+        ).strip()
+
+        if not url or not self._valid_url(url):
+
+            return {
+                "status": "error",
+                "message": (
+                    "Evidence URL is invalid."
+                ),
+            }
+
+        evidence_content = (
+            content
+            or snippet
+        )
+
+        if not evidence_content:
+
+            return {
+                "status": "error",
+                "message": (
+                    "Evidence contains no content."
+                ),
+            }
+
+        return {
+            "status": "success",
+            "title": title,
+            "content": evidence_content,
+            "source": url,
+            "source_type": result.get(
+                "source_type",
+                "web_search"
+            ),
+            "knowledge_type": (
+                "web_unverified"
+            ),
+            "evidence_status": (
+                result.get(
+                    "evidence_status",
+                    "web_unverified"
+                )
+            ),
+            "confidence": result.get(
+                "confidence",
+                "low"
+            ),
+            "relevance_score": result.get(
+                "relevance_score",
+                0
+            ),
+            "retrieved_at": result.get(
+                "retrieved_at"
+            ),
+        }
+
+
+# =========================================================
+# GLOBAL INSTANCE
+# =========================================================
 
 web_learning = WebLearning()
