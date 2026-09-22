@@ -2,27 +2,33 @@
 DRAGON AI CORE
 Web Learning and Automatic Web Search
 """
- 
+
 import base64
 import html
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
- 
+
 import requests
- 
+
+
 SEARCH_ENGINE_URL = "https://www.bing.com/search"
- 
+
 REQUEST_TIMEOUT = 15
- 
+
 MAX_RESULTS = 5
- 
+
 MAX_CONTENT_LENGTH = 12000
- 
+
+# Minimum relevance score required before accepting
+# a web result as related to the user's question.
+MIN_RELEVANCE_SCORE = 2
+
+
 class WebLearning:
     def __init__(self):
         self.session = requests.Session()
- 
+
         self.session.headers.update(
             {
                 "User-Agent": (
@@ -41,154 +47,174 @@ class WebLearning:
                 ),
             }
         )
- 
+
     def _prepare_search_query(self, query: str) -> str:
         query = str(query or "").strip()
-         
-        if not query:    
-            return ""    
 
-        query = re.sub(    
-            r"[؟?!،؛,:]+",    
-            " ",    
-            query    
-        )    
+        if not query:
+            return ""
 
-        stop_phrases = [    
-            "ما هو",    
-            "ما هي",    
-            "من هو",    
-            "من هي",    
-            "اخبرني عن",    
-            "أخبرني عن",    
-            "هل يمكنك أن تخبرني عن",    
-            "هل يمكنك ان تخبرني عن",    
-            "tell me about",    
-            "what is",    
-            "what are",    
-            "who is",    
-            "who are",    
-            "what's",    
-            "whats",    
-        ]    
+        query = re.sub(
+            r"[؟?!،؛,:]+",
+            " ",
+            query
+        )
 
-        cleaned = query    
+        stop_phrases = [
+            "ما هو",
+            "ما هي",
+            "من هو",
+            "من هي",
+            "اخبرني عن",
+            "أخبرني عن",
+            "هل يمكنك أن تخبرني عن",
+            "هل يمكنك ان تخبرني عن",
+            "tell me about",
+            "what is",
+            "what are",
+            "who is",
+            "who are",
+            "what's",
+            "whats",
+        ]
 
-        for phrase in stop_phrases:    
-            cleaned = re.sub(    
-                re.escape(phrase),    
-                " ",    
-                cleaned,    
-                flags=re.IGNORECASE,    
-            )    
+        cleaned = query
 
-        cleaned = re.sub(    
-            r"\s+",    
-            " ",    
-            cleaned    
-        ).strip()    
+        for phrase in stop_phrases:
+            cleaned = re.sub(
+                re.escape(phrase),
+                " ",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
 
-        if not cleaned:    
-            return query    
+        cleaned = re.sub(
+            r"\s+",
+            " ",
+            cleaned
+        ).strip()
 
-        return cleaned    
-     
+        if not cleaned:
+            return query
+
+        return cleaned
+
     def _build_retry_query(self, query: str) -> str:
         """
-        Build a second search query only when the first
-        search appears unrelated to the original question.
+        Build a safer second search query.
+
+        The old implementation always appended
+        "latest 2026", which was inappropriate for
+        many ordinary factual questions.
+
+        The new version keeps the important terms and
+        searches the exact core phrase first.
         """
-        query = self._prepare_search_query(query)    
+        query = self._prepare_search_query(query)
 
-        if not query:    
-            return ""    
+        if not query:
+            return ""
 
-        # Remove common Arabic search filler words.    
-        words = query.split()    
+        words = query.split()
 
-        ignored_words = {    
-            "في",    
-            "من",    
-            "عن",    
-            "على",    
-            "الى",    
-            "إلى",    
-            "ما",    
-            "هي",    
-            "هو",    
-            "هل",    
-            "هذا",    
-            "هذه",    
-            "ذلك",    
-            "تلك",    
-            "مع",    
-            "خلال",    
-            "حول",    
-            "عام",    
-            "سنة",    
-            "ماهي",    
-            "ماهو",    
-            "آخر",    
-            "احدث",    
-            "أحدث",    
-        }    
+        ignored_words = {
+            "في",
+            "من",
+            "عن",
+            "على",
+            "الى",
+            "إلى",
+            "ما",
+            "هي",
+            "هو",
+            "هل",
+            "هذا",
+            "هذه",
+            "ذلك",
+            "تلك",
+            "مع",
+            "خلال",
+            "حول",
+            "عام",
+            "سنة",
+            "ماهي",
+            "ماهو",
+            "آخر",
+            "احدث",
+            "أحدث",
+            "latest",
+            "what",
+            "what's",
+            "whats",
+            "who",
+            "tell",
+            "about",
+            "the",
+            "and",
+            "for",
+            "from",
+            "with",
+        }
 
-        important_words = [    
-            word    
-            for word in words    
-            if word.lower() not in ignored_words    
-            and len(word) > 2    
-        ]    
+        important_words = [
+            word
+            for word in words
+            if word.lower() not in ignored_words
+            and len(word) > 2
+        ]
 
-        if not important_words:    
-            return query    
+        if not important_words:
+            return query
 
-        core_query = " ".join(    
-            important_words    
-        )    
+        core_query = " ".join(
+            important_words
+        )
 
-        retry_query = (    
-            f"{core_query} latest 2026"    
-        )    
+        # Search the important phrase instead of
+        # adding an arbitrary year.
+        if len(important_words) >= 2:
+            retry_query = f'"{core_query}"'
+        else:
+            retry_query = core_query
 
-        return retry_query.strip()    
-     
+        return retry_query.strip()
+
     def _normalize_text(self, text: str) -> str:
         if not text:
             return ""
-         
-        text = html.unescape(    
-            str(text)    
-        ).lower()    
 
-        replacements = {    
-            "أ": "ا",    
-            "إ": "ا",    
-            "آ": "ا",    
-            "ة": "ه",    
-            "ى": "ي",    
-        }    
+        text = html.unescape(
+            str(text)
+        ).lower()
 
-        for old, new in replacements.items():    
-            text = text.replace(    
-                old,    
-                new    
-            )    
+        replacements = {
+            "أ": "ا",
+            "إ": "ا",
+            "آ": "ا",
+            "ة": "ه",
+            "ى": "ي",
+        }
 
-        text = re.sub(    
-            r"[^a-z0-9\u0600-\u06ff]+",    
-            " ",    
-            text    
-        )    
+        for old, new in replacements.items():
+            text = text.replace(
+                old,
+                new
+            )
 
-        text = re.sub(    
-            r"\s+",    
-            " ",    
-            text    
-        ).strip()    
+        text = re.sub(
+            r"[^a-z0-9\u0600-\u06ff]+",
+            " ",
+            text
+        )
 
-        return text    
-     
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        ).strip()
+
+        return text
+
     def _get_query_terms(
         self,
         query: str
@@ -196,104 +222,218 @@ class WebLearning:
         normalized = self._normalize_text(
             query
         )
-         
-        ignored_words = {    
-            "ما",    
-            "ماذا",    
-            "ماهي",    
-            "ماهو",    
-            "من",    
-            "في",    
-            "عن",    
-            "على",    
-            "الى",    
-            "إلى",    
-            "منذ",    
-            "خلال",    
-            "حول",    
-            "مع",    
-            "هل",    
-            "هو",    
-            "هي",    
-            "هذا",    
-            "هذه",    
-            "ذلك",    
-            "تلك",    
-            "عام",    
-            "سنه",    
-            "سنة",    
-            "احدث",    
-            "أحدث",    
-            "latest",    
-            "what",    
-            "what's",    
-            "whats",    
-            "who",    
-            "tell",    
-            "about",    
-            "the",    
-            "and",    
-            "for",    
-            "from",    
-            "with",    
-        }    
 
-        terms = []    
+        ignored_words = {
+            "ما",
+            "ماذا",
+            "ماهي",
+            "ماهو",
+            "من",
+            "في",
+            "عن",
+            "على",
+            "الى",
+            "إلى",
+            "منذ",
+            "خلال",
+            "حول",
+            "مع",
+            "هل",
+            "هو",
+            "هي",
+            "هذا",
+            "هذه",
+            "ذلك",
+            "تلك",
+            "عام",
+            "سنه",
+            "سنة",
+            "احدث",
+            "أحدث",
+            "latest",
+            "what",
+            "what's",
+            "whats",
+            "who",
+            "tell",
+            "about",
+            "the",
+            "and",
+            "for",
+            "from",
+            "with",
+        }
 
-        for word in normalized.split():    
-            if len(word) <= 2:    
-                continue    
+        terms = []
 
-            if word in ignored_words:    
-                continue    
+        for word in normalized.split():
+            if len(word) <= 2:
+                continue
 
-            if word not in terms:    
-                terms.append(word)    
+            if word in ignored_words:
+                continue
 
-        return terms    
-     
+            if word not in terms:
+                terms.append(word)
+
+        return terms
+
+    def _score_result_relevance(
+        self,
+        query: str,
+        result: dict
+    ) -> int:
+        """
+        Calculate how strongly a web result is related
+        to the search query.
+
+        Higher score = stronger relevance.
+        """
+
+        query_terms = self._get_query_terms(
+            query
+        )
+
+        if not query_terms:
+            return 0
+
+        title = self._normalize_text(
+            result.get("title", "")
+        )
+
+        snippet = self._normalize_text(
+            result.get("snippet", "")
+        )
+
+        content = self._normalize_text(
+            result.get("content", "")[:5000]
+        )
+
+        searchable_text = " ".join(
+            [
+                title,
+                snippet,
+                content,
+            ]
+        ).strip()
+
+        if not searchable_text:
+            return 0
+
+        score = 0
+
+        normalized_query = self._normalize_text(
+            query
+        )
+
+        # Exact phrase match is strong evidence.
+        if (
+            normalized_query
+            and normalized_query in searchable_text
+        ):
+            score += 4
+
+        # Term matching.
+        matched_terms = 0
+
+        for term in query_terms:
+            if term in title:
+                score += 3
+                matched_terms += 1
+                continue
+
+            if term in snippet:
+                score += 2
+                matched_terms += 1
+                continue
+
+            if term in content:
+                score += 1
+                matched_terms += 1
+
+        # A result matching all important query terms
+        # receives an additional confidence bonus.
+        if matched_terms == len(query_terms):
+            score += 3
+
+        return score
+
     def _result_is_related(
         self,
         query: str,
         result: dict
     ) -> bool:
         """
-        This is deliberately permissive.
-        """    
+        Strict relevance check.
 
-        query_terms = self._get_query_terms(    
-            query    
-        )    
+        For a multi-term query, one matching word is
+        not enough anymore.
+        """
 
-        if not query_terms:    
-            return True    
+        query_terms = self._get_query_terms(
+            query
+        )
 
-        searchable_text = " ".join(    
-            [    
-                result.get("title", ""),    
-                result.get("snippet", ""),    
-                result.get("content", "")[:3000],    
-            ]    
-        )    
+        if not query_terms:
+            return False
 
-        normalized_result = self._normalize_text(    
-            searchable_text    
-        )    
+        score = self._score_result_relevance(
+            query,
+            result
+        )
 
-        if not normalized_result:    
-            return False    
+        if len(query_terms) == 1:
+            return score >= 2
 
-        matches = 0    
+        # For multi-term questions, require at least
+        # the minimum relevance score and meaningful
+        # coverage of the important terms.
+        title = self._normalize_text(
+            result.get("title", "")
+        )
 
-        for term in query_terms:    
-            if term in normalized_result:    
-                matches += 1    
+        snippet = self._normalize_text(
+            result.get("snippet", "")
+        )
 
-        if len(query_terms) == 1:    
-            return matches >= 1    
+        content = self._normalize_text(
+            result.get("content", "")[:5000]
+        )
 
-        return matches >= 1    
-     
+        searchable_text = " ".join(
+            [
+                title,
+                snippet,
+                content,
+            ]
+        )
+
+        matched_terms = sum(
+            1
+            for term in query_terms
+            if term in searchable_text
+        )
+
+        # For two important terms, both should normally
+        # appear somewhere in the result.
+        if len(query_terms) == 2:
+            return (
+                matched_terms >= 2
+                and score >= MIN_RELEVANCE_SCORE
+            )
+
+        # For longer queries, require at least half
+        # of the important terms, rounded up.
+        required_terms = max(
+            2,
+            (len(query_terms) + 1) // 2
+        )
+
+        return (
+            matched_terms >= required_terms
+            and score >= MIN_RELEVANCE_SCORE
+        )
+
     def _filter_obviously_unrelated_results(
         self,
         query: str,
@@ -301,301 +441,336 @@ class WebLearning:
     ):
         if not results:
             return []
-         
-        related = []    
 
-        for result in results:    
-            if self._result_is_related(    
-                query,    
-                result    
-            ):    
-                related.append(result)    
+        scored_results = []
 
-        return related    
-     
-    def _normalize_search_url(self, url: str) -> str:
+        for result in results:
+            score = self._score_result_relevance(
+                query,
+                result
+            )
+
+            if self._result_is_related(
+                query,
+                result
+            ):
+                scored_results.append(
+                    (
+                        score,
+                        result
+                    )
+                )
+
+        # Strongest relevant results first.
+        scored_results.sort(
+            key=lambda item: item[0],
+            reverse=True
+        )
+
+        return [
+            result
+            for score, result
+            in scored_results[:MAX_RESULTS]
+        ]
+
+    def _normalize_search_url(
+        self,
+        url: str
+    ) -> str:
         if not url:
             return ""
-         
-        url = html.unescape(url)    
-        url = urllib.parse.unquote(url)    
 
-        parsed = urllib.parse.urlparse(url)    
+        url = html.unescape(url)
+        url = urllib.parse.unquote(url)
 
-        if "bing.com" in parsed.netloc.lower():    
-            query = urllib.parse.parse_qs(    
-                parsed.query    
-            )    
+        parsed = urllib.parse.urlparse(url)
 
-            for key in ("u", "url", "r"):    
-                values = query.get(key)    
+        if "bing.com" in parsed.netloc.lower():
+            query = urllib.parse.parse_qs(
+                parsed.query
+            )
 
-                if values:    
-                    candidate = values[0]    
+            for key in ("u", "url", "r"):
+                values = query.get(key)
 
-                    if candidate.startswith("http"):    
-                        return candidate    
+                if values:
+                    candidate = values[0]
 
-                    decoded = self._decode_bing_url(    
-                        candidate    
-                    )    
+                    if candidate.startswith("http"):
+                        return candidate
 
-                    if decoded:    
-                        return decoded    
+                    decoded = self._decode_bing_url(
+                        candidate
+                    )
 
-        return url    
-     
-    def _decode_bing_url(self, value: str) -> str:
+                    if decoded:
+                        return decoded
+
+        return url
+
+    def _decode_bing_url(
+        self,
+        value: str
+    ) -> str:
         if not value:
             return ""
-         
-        value = urllib.parse.unquote(    
-            value    
-        )    
 
-        if value.startswith("http"):    
-            return value    
+        value = urllib.parse.unquote(
+            value
+        )
 
-        if value.startswith("a1"):    
-            encoded = value[2:]    
+        if value.startswith("http"):
+            return value
 
-            try:    
-                padding = "=" * (    
-                    (-len(encoded)) % 4    
-                )    
+        if value.startswith("a1"):
+            encoded = value[2:]
 
-                decoded = base64.urlsafe_b64decode(    
-                    encoded + padding    
-                ).decode(    
-                    "utf-8",    
-                    errors="ignore"    
-                )    
+            try:
+                padding = "=" * (
+                    (-len(encoded)) % 4
+                )
 
-                match = re.search(    
-                    r"https?://[^\s\"<>]+",    
-                    decoded    
-                )    
+                decoded = (
+                    base64.urlsafe_b64decode(
+                        encoded + padding
+                    )
+                    .decode(
+                        "utf-8",
+                        errors="ignore"
+                    )
+                )
 
-                if match:    
-                    return match.group(0)    
+                match = re.search(
+                    r"https?://[^\s\"<>]+",
+                    decoded
+                )
 
-            except Exception:    
-                pass    
+                if match:
+                    return match.group(0)
 
-        return ""    
-     
-    def _valid_url(self, url: str) -> bool:
+            except Exception:
+                pass
+
+        return ""
+
+    def _valid_url(
+        self,
+        url: str
+    ) -> bool:
         if not url:
             return False
-         
-        try:    
-            parsed = urllib.parse.urlparse(    
-                url    
-            )    
 
-            return (    
-                parsed.scheme in (    
-                    "http",    
-                    "https",    
-                )    
-                and bool(parsed.netloc)    
-            )    
+        try:
+            parsed = urllib.parse.urlparse(
+                url
+            )
 
-        except Exception:    
-            return False    
-     
-    def _clean_text(self, text: str) -> str:
+            return (
+                parsed.scheme in (
+                    "http",
+                    "https",
+                )
+                and bool(parsed.netloc)
+            )
+
+        except Exception:
+            return False
+
+    def _clean_text(
+        self,
+        text: str
+    ) -> str:
         if not text:
             return ""
-         
-        text = html.unescape(    
-            text    
-        )    
 
-        text = re.sub(    
-            r"<[^>]+>",    
-            " ",    
-            text    
-        )    
+        text = html.unescape(
+            text
+        )
 
-        text = re.sub(    
-            r"\s+",    
-            " ",    
-            text    
-        ).strip()    
+        text = re.sub(
+            r"<[^>]+>",
+            " ",
+            text
+        )
 
-        return text    
-     
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        ).strip()
+
+        return text
+
     def _parse_bing_rss(
         self,
         xml_text: str
     ):
         results = []
-         
-        if not xml_text:    
-            return results    
 
-        try:    
-            root = ET.fromstring(    
-                xml_text    
-            )    
+        if not xml_text:
+            return results
 
-        except ET.ParseError:    
-            return results    
+        try:
+            root = ET.fromstring(
+                xml_text
+            )
 
-        for item in root.findall(    
-            ".//item"    
-        ):    
-            title_element = item.find(    
-                "title"    
-            )    
+        except ET.ParseError:
+            return results
 
-            link_element = item.find(    
-                "link"    
-            )    
+        for item in root.findall(
+            ".//item"
+        ):
+            title_element = item.find(
+                "title"
+            )
 
-            description_element = item.find(    
-                "description"    
-            )    
+            link_element = item.find(
+                "link"
+            )
 
-            title = (    
-                title_element.text    
-                if title_element is not None    
-                else ""    
-            )    
+            description_element = item.find(
+                "description"
+            )
 
-            url = (    
-                link_element.text    
-                if link_element is not None    
-                else ""    
-            )    
+            title = (
+                title_element.text
+                if title_element is not None
+                else ""
+            )
 
-            snippet = (    
-                description_element.text    
-                if description_element is not None    
-                else ""    
-            )    
+            url = (
+                link_element.text
+                if link_element is not None
+                else ""
+            )
 
-            title = self._clean_text(    
-                title    
-            )    
+            snippet = (
+                description_element.text
+                if description_element is not None
+                else ""
+            )
 
-            url = self._normalize_search_url(    
-                url    
-            )    
+            title = self._clean_text(
+                title
+            )
 
-            snippet = self._clean_text(    
-                snippet    
-            )    
+            url = self._normalize_search_url(
+                url
+            )
 
-            if not title or not url:    
-                continue    
+            snippet = self._clean_text(
+                snippet
+            )
 
-            if not self._valid_url(url):    
-                continue    
+            if not title or not url:
+                continue
 
-            results.append(    
-                {    
-                    "title": title,    
-                    "url": url,    
-                    "snippet": snippet,    
-                }    
-            )    
+            if not self._valid_url(url):
+                continue
 
-            if len(results) >= MAX_RESULTS:    
-                break    
+            results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                }
+            )
 
-        return results    
-     
+            if len(results) >= MAX_RESULTS:
+                break
+
+        return results
+
     def _extract_html_content(
         self,
         text: str
     ) -> str:
-        if not text:    
-            return ""    
+        if not text:
+            return ""
 
-        text = re.sub(    
-            r"<script\b[^>]*>.*?</script>",    
-            " ",    
-            text,    
-            flags=re.IGNORECASE | re.DOTALL,    
-        )    
+        text = re.sub(
+            r"<script\b[^>]*>.*?</script>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
 
-        text = re.sub(    
-            r"<style\b[^>]*>.*?</style>",    
-            " ",    
-            text,    
-            flags=re.IGNORECASE | re.DOTALL,    
-        )    
+        text = re.sub(
+            r"<style\b[^>]*>.*?</style>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
 
-        text = re.sub(    
-            r"<noscript\b[^>]*>.*?</noscript>",    
-            " ",    
-            text,    
-            flags=re.IGNORECASE | re.DOTALL,    
-        )    
+        text = re.sub(
+            r"<noscript\b[^>]*>.*?</noscript>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
 
-        text = re.sub(    
-            r"<[^>]+>",    
-            " ",    
-            text    
-        )    
+        text = re.sub(
+            r"<[^>]+>",
+            " ",
+            text
+        )
 
-        text = html.unescape(    
-            text    
-        )    
+        text = html.unescape(
+            text
+        )
 
-        text = re.sub(    
-            r"\s+",    
-            " ",    
-            text    
-        ).strip()    
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        ).strip()
 
-        if len(text) > MAX_CONTENT_LENGTH:    
-            text = text[    
-                :MAX_CONTENT_LENGTH    
-            ]    
+        if len(text) > MAX_CONTENT_LENGTH:
+            text = text[
+                :MAX_CONTENT_LENGTH
+            ]
 
-        return text    
-     
+        return text
+
     def _fetch_page(
         self,
         url: str
     ) -> str:
-        try:    
-            response = self.session.get(    
-                url,    
-                timeout=REQUEST_TIMEOUT,    
-                allow_redirects=True,    
-            )    
+        try:
+            response = self.session.get(
+                url,
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True,
+            )
 
-            response.raise_for_status()    
+            response.raise_for_status()
 
-            content_type = (    
-                response.headers.get(    
-                    "Content-Type",    
-                    ""    
-                ).lower()    
-            )    
+            content_type = (
+                response.headers.get(
+                    "Content-Type",
+                    ""
+                ).lower()
+            )
 
-            if (    
-                "text/html" not in content_type    
-                and "text/plain" not in content_type    
-                and "application/xhtml+xml"    
-                not in content_type    
-            ):    
-                return ""    
+            if (
+                "text/html" not in content_type
+                and "text/plain" not in content_type
+                and "application/xhtml+xml"
+                not in content_type
+            ):
+                return ""
 
-            return self._extract_html_content(    
-                response.text    
-            )    
+            return self._extract_html_content(
+                response.text
+            )
 
-        except requests.RequestException:    
-            return ""    
+        except requests.RequestException:
+            return ""
 
-        except Exception:    
-            return ""    
-     
+        except Exception:
+            return ""
+
     def _perform_search(
         self,
         search_query: str
@@ -603,36 +778,37 @@ class WebLearning:
         """
         Execute one Bing RSS search.
         """
-        if not search_query:    
-            return []    
 
-        response = self.session.get(    
-            SEARCH_ENGINE_URL,    
-            params={    
-                "q": search_query,    
-                "format": "rss",    
-            },    
-            headers={    
-                "Accept": (    
-                    "application/rss+xml,"    
-                    "application/xml,"    
-                    "text/xml,"    
-                    "*/*;q=0.8"    
-                ),    
-                "Accept-Language": (    
-                    "en-US,en;q=0.9,ar;q=0.8"    
-                ),    
-            },    
-            timeout=REQUEST_TIMEOUT,    
-            allow_redirects=True,    
-        )    
+        if not search_query:
+            return []
 
-        response.raise_for_status()    
+        response = self.session.get(
+            SEARCH_ENGINE_URL,
+            params={
+                "q": search_query,
+                "format": "rss",
+            },
+            headers={
+                "Accept": (
+                    "application/rss+xml,"
+                    "application/xml,"
+                    "text/xml,"
+                    "*/*;q=0.8"
+                ),
+                "Accept-Language": (
+                    "en-US,en;q=0.9,ar;q=0.8"
+                ),
+            },
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=True,
+        )
 
-        return self._parse_bing_rss(    
-            response.text    
-        )    
-     
+        response.raise_for_status()
+
+        return self._parse_bing_rss(
+            response.text
+        )
+
     def _complete_results(
         self,
         results
@@ -641,183 +817,195 @@ class WebLearning:
         Fetch page content while preserving the
         original search result structure.
         """
-        final_results = []    
 
-        for result in results:    
-            title = result.get(    
-                "title",    
-                ""    
-            )    
+        final_results = []
 
-            url = result.get(    
-                "url",    
-                ""    
-            )    
+        for result in results:
+            title = result.get(
+                "title",
+                ""
+            )
 
-            snippet = result.get(    
-                "snippet",    
-                ""    
-            )    
+            url = result.get(
+                "url",
+                ""
+            )
 
-            content = ""    
+            snippet = result.get(
+                "snippet",
+                ""
+            )
 
-            if self._valid_url(url):    
-                content = self._fetch_page(    
-                    url    
-                )    
+            content = ""
 
-            final_results.append(    
-                {    
-                    "title": title,    
-                    "url": url,    
-                    "snippet": snippet,    
-                    "content": content,    
-                }    
-            )    
+            if self._valid_url(url):
+                content = self._fetch_page(
+                    url
+                )
 
-        return final_results    
-     
+            final_results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                    "content": content,
+                }
+            )
+
+        return final_results
+
     def search_web(
         self,
         query: str
     ):
-        search_query = (    
-            self._prepare_search_query(    
-                query    
-            )    
-        )    
+        search_query = (
+            self._prepare_search_query(
+                query
+            )
+        )
 
-        if not search_query:    
-            return {    
-                "status": "error",    
-                "message": "Empty search query.",    
-                "results": [],    
-            }    
+        if not search_query:
+            return {
+                "status": "error",
+                "message": "Empty search query.",
+                "results": [],
+            }
 
-        try:    
-            first_results = self._perform_search(    
-                search_query    
-            )    
+        try:
+            # -------------------------------------------------
+            # FIRST SEARCH
+            # -------------------------------------------------
 
-            if first_results:    
-                related_results = (    
-                    self._filter_obviously_unrelated_results(    
-                        search_query,    
-                        first_results    
-                    )    
-                )    
+            first_results = self._perform_search(
+                search_query
+            )
 
-                if related_results:    
-                    final_results = (    
-                        self._complete_results(    
-                            related_results    
-                        )    
-                    )    
+            if first_results:
+                related_results = (
+                    self._filter_obviously_unrelated_results(
+                        search_query,
+                        first_results
+                    )
+                )
 
-                    return {    
-                        "status": "success",    
-                        "search_query": search_query,    
-                        "results": final_results,    
-                    }    
+                if related_results:
+                    final_results = (
+                        self._complete_results(
+                            related_results
+                        )
+                    )
 
-            retry_query = (    
-                self._build_retry_query(    
-                    search_query    
-                )    
-            )    
+                    return {
+                        "status": "success",
+                        "search_query": search_query,
+                        "results": final_results,
+                        "retry_used": False,
+                    }
 
-            if (    
-                retry_query    
-                and retry_query.lower()    
-                != search_query.lower()    
-            ):    
-                retry_results = (    
-                    self._perform_search(    
-                        retry_query    
-                    )    
-                )    
+            # -------------------------------------------------
+            # RETRY SEARCH
+            # -------------------------------------------------
 
-                if retry_results:    
-                    retry_related_results = (    
-                        self._filter_obviously_unrelated_results(    
-                            retry_query,    
-                            retry_results    
-                        )    
-                    )    
+            retry_query = (
+                self._build_retry_query(
+                    search_query
+                )
+            )
 
-                    if retry_related_results:    
-                        final_results = (    
-                            self._complete_results(    
-                                retry_related_results    
-                            )    
-                        )    
+            if (
+                retry_query
+                and retry_query.lower()
+                != search_query.lower()
+            ):
+                retry_results = (
+                    self._perform_search(
+                        retry_query
+                    )
+                )
 
-                        return {    
-                            "status": "success",    
-                            "search_query": retry_query,    
-                            "original_search_query": (    
-                                search_query    
-                            ),    
-                            "retry_used": True,    
-                            "results": final_results,    
-                        }    
+                if retry_results:
+                    retry_related_results = (
+                        self._filter_obviously_unrelated_results(
+                            retry_query,
+                            retry_results
+                        )
+                    )
 
-            if first_results:    
-                final_results = (    
-                    self._complete_results(    
-                        first_results    
-                    )    
-                )    
+                    if retry_related_results:
+                        final_results = (
+                            self._complete_results(
+                                retry_related_results
+                            )
+                        )
 
-                return {    
-                    "status": "success",    
-                    "search_query": search_query,    
-                    "results": final_results,    
-                    "retry_used": False,    
-                    "relevance_fallback": True,    
-                }    
+                        return {
+                            "status": "success",
+                            "search_query": retry_query,
+                            "original_search_query": (
+                                search_query
+                            ),
+                            "retry_used": True,
+                            "results": final_results,
+                        }
 
-            return {    
-                "status": "empty",    
-                "search_query": search_query,    
-                "results": [],    
-                "message": (    
-                    "No valid Bing RSS results."    
-                ),    
-            }    
+            # -------------------------------------------------
+            # NO RELEVANT RESULTS
+            # -------------------------------------------------
+            #
+            # IMPORTANT:
+            # Never return the original unrelated
+            # Bing results as a fallback.
+            #
+            # This prevents situations such as:
+            #
+            # "ملك الجزائر"
+            #        ↓
+            # unrelated Flipkart results
+            #
+            # -------------------------------------------------
 
-        except requests.Timeout:    
-            return {    
-                "status": "error",    
-                "message": (    
-                    "Web search timed out."    
-                ),    
-                "search_query": search_query,    
-                "results": [],    
-            }    
+            return {
+                "status": "empty",
+                "search_query": search_query,
+                "results": [],
+                "message": (
+                    "No sufficiently relevant web "
+                    "results were found."
+                ),
+            }
 
-        except requests.RequestException as exc:    
-            return {    
-                "status": "error",    
-                "message": (    
-                    f"Web search request failed: "    
-                    f"{str(exc)}"    
-                ),    
-                "search_query": search_query,    
-                "results": [],    
-            }    
+        except requests.Timeout:
+            return {
+                "status": "error",
+                "message": (
+                    "Web search timed out."
+                ),
+                "search_query": search_query,
+                "results": [],
+            }
 
-        except Exception as exc:    
-            return {    
-                "status": "error",    
-                "message": (    
-                    f"Web search failed: "    
-                    f"{str(exc)}"    
-                ),    
-                "search_query": search_query,    
-                "results": [],    
-            }    
-     
+        except requests.RequestException as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"Web search request failed: "
+                    f"{str(exc)}"
+                ),
+                "search_query": search_query,
+                "results": [],
+            }
+
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": (
+                    f"Web search failed: "
+                    f"{str(exc)}"
+                ),
+                "search_query": search_query,
+                "results": [],
+            }
+
     def learn_from_url(
         self,
         url: str,
@@ -825,39 +1013,40 @@ class WebLearning:
         knowledge_type=None,
         confidence=None
     ):
-        if not self._valid_url(url):    
-            return {    
-                "status": "error",    
-                "message": "Invalid URL.",    
-            }    
+        if not self._valid_url(url):
+            return {
+                "status": "error",
+                "message": "Invalid URL.",
+            }
 
-        try:    
-            content = self._fetch_page(    
-                url    
-            )    
+        try:
+            content = self._fetch_page(
+                url
+            )
 
-            if not content:    
-                return {    
-                    "status": "error",    
-                    "message": (    
-                        "Could not extract "    
-                        "content from URL."    
-                    ),    
-                }    
+            if not content:
+                return {
+                    "status": "error",
+                    "message": (
+                        "Could not extract "
+                        "content from URL."
+                    ),
+                }
 
-            return {    
-                "status": "success",    
-                "url": url,    
-                "title": title,    
-                "knowledge_type": knowledge_type,    
-                "confidence": confidence,    
-                "content": content,    
-            }    
+            return {
+                "status": "success",
+                "url": url,
+                "title": title,
+                "knowledge_type": knowledge_type,
+                "confidence": confidence,
+                "content": content,
+            }
 
-        except Exception as exc:    
-            return {    
-                "status": "error",    
-                "message": str(exc),    
-            }  
- 
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": str(exc),
+            }
+
+
 web_learning = WebLearning()
