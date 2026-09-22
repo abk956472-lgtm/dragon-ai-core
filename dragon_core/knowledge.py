@@ -7,14 +7,22 @@ from threading import Lock
 from supabase import create_client
 
 
+# ==========================================================
+# Supabase Configuration
+# ==========================================================
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
 
 if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL is not configured.")
+    raise RuntimeError(
+        "SUPABASE_URL is not configured."
+    )
 
 if not SUPABASE_SECRET_KEY:
-    raise RuntimeError("SUPABASE_SECRET_KEY is not configured.")
+    raise RuntimeError(
+        "SUPABASE_SECRET_KEY is not configured."
+    )
 
 
 supabase = create_client(
@@ -22,6 +30,10 @@ supabase = create_client(
     SUPABASE_SECRET_KEY
 )
 
+
+# ==========================================================
+# Knowledge Item
+# ==========================================================
 
 @dataclass
 class KnowledgeItem:
@@ -31,30 +43,87 @@ class KnowledgeItem:
     knowledge_type: str = "fact"
 
 
+# ==========================================================
+# Knowledge Base
+# ==========================================================
+
 class KnowledgeBase:
+    """
+    Knowledge Engine الأساسي لـ DRAGON AI CORE.
+
+    مسؤول عن:
+
+    - تخزين المعرفة
+    - تحميل المعرفة من Supabase
+    - البحث في المعرفة
+    - تصنيف المعرفة
+    - منع التكرار
+    - دعم المعرفة العلمية
+    - دعم المعرفة المسترجعة من الويب
+
+    مهم:
+
+    Knowledge Engine منفصل عن Memory Engine.
+
+    Memory:
+        يتذكر معلومات مرتبطة بالمحادثات والسياق.
+
+    Knowledge:
+        يخزن معلومات يمكن استخدامها كمصدر معرفي.
+    """
+
+    # ======================================================
+    # Allowed Knowledge Types
+    # ======================================================
+
+    ALLOWED_TYPES = {
+        "fact",
+        "inference",
+        "hypothesis",
+        "web_unverified"
+    }
+
     def __init__(self):
+
         self._items = []
         self._lock = Lock()
 
         self._load_from_database()
 
-    def _load_from_database(self):
-        response = (
-            supabase
-            .table("knowledge")
-            .select(
-                "title,content,source,knowledge_type"
-            )
-            .execute()
-        )
+    # ======================================================
+    # Load From Database
+    # ======================================================
 
-        rows = response.data or []
+    def _load_from_database(self):
+
+        try:
+
+            response = (
+                supabase
+                .table("knowledge")
+                .select(
+                    "title,content,source,knowledge_type"
+                )
+                .execute()
+            )
+
+            rows = response.data or []
+
+        except Exception:
+            rows = []
 
         with self._lock:
+
             self._items = [
                 KnowledgeItem(
-                    title=row["title"],
-                    content=row["content"],
+                    title=row.get(
+                        "title",
+                        ""
+                    ),
+                    content=row.get(
+                        "content",
+                        ""
+                    ),
                     source=row.get(
                         "source",
                         "internal"
@@ -65,7 +134,26 @@ class KnowledgeBase:
                     )
                 )
                 for row in rows
+                if row.get("content")
             ]
+
+    # ======================================================
+    # Validate Knowledge Type
+    # ======================================================
+
+    def _validate_knowledge_type(
+        self,
+        knowledge_type: str
+    ):
+
+        return (
+            knowledge_type
+            in self.ALLOWED_TYPES
+        )
+
+    # ======================================================
+    # Add
+    # ======================================================
 
     def add(
         self,
@@ -74,15 +162,40 @@ class KnowledgeBase:
         source: str = "internal",
         knowledge_type: str = "fact"
     ):
-        allowed_types = {
-            "fact",
-            "inference",
-            "hypothesis"
-        }
 
-        if knowledge_type not in allowed_types:
+        title = str(
+            title or ""
+        ).strip()
+
+        content = str(
+            content or ""
+        ).strip()
+
+        source = str(
+            source or "internal"
+        ).strip()
+
+        knowledge_type = str(
+            knowledge_type or "fact"
+        ).strip().lower()
+
+        if not title:
             raise ValueError(
-                "knowledge_type must be fact, inference, or hypothesis."
+                "Knowledge title is required."
+            )
+
+        if not content:
+            raise ValueError(
+                "Knowledge content is required."
+            )
+
+        if not self._validate_knowledge_type(
+            knowledge_type
+        ):
+            raise ValueError(
+                "knowledge_type must be "
+                "fact, inference, hypothesis, "
+                "or web_unverified."
             )
 
         item = KnowledgeItem(
@@ -92,25 +205,58 @@ class KnowledgeBase:
             knowledge_type=knowledge_type
         )
 
+        # ----------------------------------------------
+        # Duplicate Check
+        # ----------------------------------------------
+
         with self._lock:
+
             for existing in self._items:
+
                 if (
                     existing.title == title
                     and existing.content == content
                     and existing.source == source
-                    and existing.knowledge_type == knowledge_type
+                    and existing.knowledge_type
+                    == knowledge_type
                 ):
-                    return
+                    return existing
 
-        supabase.table("knowledge").insert({
-            "title": title,
-            "content": content,
-            "source": source,
-            "knowledge_type": knowledge_type
-        }).execute()
+        # ----------------------------------------------
+        # Database
+        # ----------------------------------------------
+
+        try:
+
+            supabase.table(
+                "knowledge"
+            ).insert(
+                {
+                    "title": title,
+                    "content": content,
+                    "source": source,
+                    "knowledge_type": knowledge_type
+                }
+            ).execute()
+
+        except Exception as error:
+
+            raise RuntimeError(
+                f"Database error: {error}"
+            )
+
+        # ----------------------------------------------
+        # Local Cache
+        # ----------------------------------------------
 
         with self._lock:
             self._items.append(item)
+
+        return item
+
+    # ==========================================================
+    # Learn
+    # ==========================================================
 
     def learn(
         self,
@@ -120,70 +266,119 @@ class KnowledgeBase:
         knowledge_type: str
     ) -> dict:
 
-        title = title.strip()
-        content = content.strip()
-        source = source.strip()
-        knowledge_type = knowledge_type.strip().lower()
+        title = str(
+            title or ""
+        ).strip()
+
+        content = str(
+            content or ""
+        ).strip()
+
+        source = str(
+            source or ""
+        ).strip()
+
+        knowledge_type = str(
+            knowledge_type or ""
+        ).strip().lower()
+
+        # ----------------------------------------------
+        # Validation
+        # ----------------------------------------------
 
         if not title:
-            return {
-                "status": "rejected",
-                "reason": "Knowledge title is required."
-            }
 
-        if not content:
-            return {
-                "status": "rejected",
-                "reason": "Knowledge content is required."
-            }
-
-        if not source:
-            return {
-                "status": "rejected",
-                "reason": "Knowledge source is required."
-            }
-
-        allowed_types = {
-            "fact",
-            "inference",
-            "hypothesis"
-        }
-
-        if knowledge_type not in allowed_types:
             return {
                 "status": "rejected",
                 "reason": (
-                    "knowledge_type must be fact, "
-                    "inference, or hypothesis."
+                    "Knowledge title is required."
                 )
             }
 
+        if not content:
+
+            return {
+                "status": "rejected",
+                "reason": (
+                    "Knowledge content is required."
+                )
+            }
+
+        if not source:
+
+            return {
+                "status": "rejected",
+                "reason": (
+                    "Knowledge source is required."
+                )
+            }
+
+        if not self._validate_knowledge_type(
+            knowledge_type
+        ):
+
+            return {
+                "status": "rejected",
+                "reason": (
+                    "knowledge_type must be "
+                    "fact, inference, hypothesis, "
+                    "or web_unverified."
+                )
+            }
+
+        # ----------------------------------------------
+        # Duplicate Check
+        # ----------------------------------------------
+
         with self._lock:
+
             for item in self._items:
+
                 if (
                     item.title == title
                     and item.content == content
                     and item.source == source
-                    and item.knowledge_type == knowledge_type
+                    and item.knowledge_type
+                    == knowledge_type
                 ):
+
                     return {
                         "status": "duplicate",
-                        "reason": "This knowledge already exists."
+                        "reason": (
+                            "This knowledge already exists."
+                        )
                     }
 
+        # ----------------------------------------------
+        # Save To Supabase
+        # ----------------------------------------------
+
         try:
-            supabase.table("knowledge").insert({
-                "title": title,
-                "content": content,
-                "source": source,
-                "knowledge_type": knowledge_type
-            }).execute()
+
+            supabase.table(
+                "knowledge"
+            ).insert(
+                {
+                    "title": title,
+                    "content": content,
+                    "source": source,
+                    "knowledge_type":
+                        knowledge_type
+                }
+            ).execute()
 
         except Exception as error:
+
             return {
                 "status": "error",
-                "reason": f"Database error: {error}"
+                "reason": (
+                    f"Database error: {error}"
+                )
             }
+
+        # ----------------------------------------------
+        # Add To Local Cache
+        # ----------------------------------------------
 
         item = KnowledgeItem(
             title=title,
@@ -198,16 +393,34 @@ class KnowledgeBase:
         return {
             "status": "learned",
             "title": title,
-            "knowledge_type": knowledge_type,
+            "knowledge_type":
+                knowledge_type,
             "source": source
         }
 
-    def get_all(self):
-        with self._lock:
-            return list(self._items)
+    # ==========================================================
+    # Get All
+    # ==========================================================
 
-    def _normalize_arabic(self, text: str) -> str:
-        text = text.lower().strip()
+    def get_all(self):
+
+        with self._lock:
+            return list(
+                self._items
+            )
+
+    # ==========================================================
+    # Arabic Normalization
+    # ==========================================================
+
+    def _normalize_arabic(
+        self,
+        text: str
+    ) -> str:
+
+        text = str(
+            text or ""
+        ).lower().strip()
 
         replacements = {
             "أ": "ا",
@@ -218,7 +431,11 @@ class KnowledgeBase:
         }
 
         for old, new in replacements.items():
-            text = text.replace(old, new)
+
+            text = text.replace(
+                old,
+                new
+            )
 
         punctuation = (
             "،؛؟!.,:;()[]{}\"'`"
@@ -226,9 +443,14 @@ class KnowledgeBase:
         )
 
         for mark in punctuation:
-            text = text.replace(mark, " ")
+
+            text = text.replace(
+                mark,
+                " "
+            )
 
         words = text.split()
+
         normalized_words = []
 
         prefixes = (
@@ -245,24 +467,52 @@ class KnowledgeBase:
         )
 
         for word in words:
+
             for prefix in prefixes:
+
                 if (
                     word.startswith(prefix)
-                    and len(word) > len(prefix) + 2
+                    and len(word)
+                    > len(prefix) + 2
                 ):
-                    word = word[len(prefix):]
+
+                    word = word[
+                        len(prefix):
+                    ]
+
                     break
 
-            if word.startswith("ال") and len(word) > 4:
+            if (
+                word.startswith("ال")
+                and len(word) > 4
+            ):
+
                 word = word[2:]
 
             if word:
-                normalized_words.append(word)
 
-        return " ".join(normalized_words)
+                normalized_words.append(
+                    word
+                )
 
-    def _tokenize(self, text: str):
-        normalized = self._normalize_arabic(text)
+        return " ".join(
+            normalized_words
+        )
+
+    # ==========================================================
+    # Tokenizer
+    # ==========================================================
+
+    def _tokenize(
+        self,
+        text: str
+    ):
+
+        normalized = (
+            self._normalize_arabic(
+                text
+            )
+        )
 
         return set(
             re.findall(
@@ -271,13 +521,26 @@ class KnowledgeBase:
             )
         )
 
-    def search(self, query: str):
-        normalized_query = self._normalize_arabic(query)
+    # ==========================================================
+    # Search
+    # ==========================================================
+
+    def search(
+        self,
+        query: str
+    ):
+
+        normalized_query = (
+            self._normalize_arabic(
+                query
+            )
+        )
 
         if not normalized_query:
             return []
 
         ignored_words = {
+
             # Arabic
             "ما",
             "ماذا",
@@ -334,36 +597,50 @@ class KnowledgeBase:
             "current",
         }
 
-        query_tokens = self._tokenize(normalized_query)
+        query_tokens = self._tokenize(
+            normalized_query
+        )
 
         words = {
             word
             for word in query_tokens
-            if len(word) > 2
-            and word not in ignored_words
+            if (
+                len(word) > 2
+                and word not in ignored_words
+            )
         }
 
         if not words:
             return []
 
         with self._lock:
+
             scored_results = []
 
             for item in self._items:
-                title_tokens = self._tokenize(
-                    item.title
+
+                title_tokens = (
+                    self._tokenize(
+                        item.title
+                    )
                 )
 
-                content_tokens = self._tokenize(
-                    item.content
+                content_tokens = (
+                    self._tokenize(
+                        item.content
+                    )
                 )
 
                 title_matches = (
-                    words.intersection(title_tokens)
+                    words.intersection(
+                        title_tokens
+                    )
                 )
 
                 content_matches = (
-                    words.intersection(content_tokens)
+                    words.intersection(
+                        content_tokens
+                    )
                 )
 
                 matched_words = (
@@ -376,39 +653,96 @@ class KnowledgeBase:
 
                 score = 0
 
-                # تطابق كامل للعبارة في العنوان
-                if normalized_query in self._normalize_arabic(
-                    item.title
+                # ------------------------------------------
+                # Exact title phrase
+                # ------------------------------------------
+
+                if (
+                    normalized_query
+                    in self._normalize_arabic(
+                        item.title
+                    )
                 ):
+
                     score += 50
 
-                # تطابق كامل للعبارة في المحتوى
-                if normalized_query in self._normalize_arabic(
-                    item.content
+                # ------------------------------------------
+                # Exact content phrase
+                # ------------------------------------------
+
+                if (
+                    normalized_query
+                    in self._normalize_arabic(
+                        item.content
+                    )
                 ):
+
                     score += 15
 
-                # كلمات موجودة في العنوان
-                score += len(title_matches) * 10
+                # ------------------------------------------
+                # Title Matches
+                # ------------------------------------------
 
-                # كلمات موجودة في المحتوى
-                score += len(content_matches) * 2
+                score += (
+                    len(title_matches)
+                    * 10
+                )
 
-                total_query_words = len(words)
-                matched_count = len(matched_words)
+                # ------------------------------------------
+                # Content Matches
+                # ------------------------------------------
 
-                # لا نعتبر نتيجة ضعيفة مرتبطة بالسؤال
+                score += (
+                    len(content_matches)
+                    * 2
+                )
+
+                total_query_words = len(
+                    words
+                )
+
+                matched_count = len(
+                    matched_words
+                )
+
+                # ------------------------------------------
+                # Minimum relevance
+                # ------------------------------------------
+
                 if total_query_words >= 2:
+
                     if matched_count < 2:
                         continue
 
-                # إذا كانت النتيجة تعتمد على المحتوى فقط
-                # يجب أن يكون هناك تطابق كافٍ
                 if (
                     not title_matches
                     and len(content_matches) < 2
                 ):
+
                     continue
+
+                # ------------------------------------------
+                # Knowledge Type Adjustment
+                # ------------------------------------------
+
+                if item.knowledge_type == "fact":
+
+                    score += 3
+
+                elif item.knowledge_type == "inference":
+
+                    score += 1
+
+                elif item.knowledge_type == "hypothesis":
+
+                    score += 0
+
+                elif (
+                    item.knowledge_type
+                    == "web_unverified"
+                ):
+
+                    score -= 2
 
                 scored_results.append(
                     (
@@ -428,49 +762,163 @@ class KnowledgeBase:
 
             return [
                 item
-                for score, matched_words, item
+                for score,
+                matched_words,
+                item
                 in scored_results
             ]
 
+    # ==========================================================
+    # Search By Knowledge Type
+    # ==========================================================
+
+    def search_by_type(
+        self,
+        knowledge_type: str
+    ):
+
+        knowledge_type = str(
+            knowledge_type or ""
+        ).strip().lower()
+
+        with self._lock:
+
+            return [
+                item
+                for item in self._items
+                if (
+                    item.knowledge_type
+                    == knowledge_type
+                )
+            ]
+
+    # ==========================================================
+    # Search Scientific Knowledge
+    # ==========================================================
+
+    def search_scientific(
+        self,
+        query: str
+    ):
+
+        results = self.search(
+            query
+        )
+
+        scientific_sources = {
+            "internal-scientific",
+            "scientific",
+            "research",
+        }
+
+        return [
+            item
+            for item in results
+            if (
+                item.source
+                in scientific_sources
+                or item.knowledge_type
+                in {
+                    "fact",
+                    "inference",
+                    "hypothesis"
+                }
+            )
+        ]
+
+    # ==========================================================
+    # Clear Local Cache
+    # ==========================================================
+
     def clear(self):
+
         with self._lock:
             self._items.clear()
 
 
+# ==========================================================
+# Global Knowledge Engine
+# ==========================================================
+
 knowledge = KnowledgeBase()
 
 
-# ==============================
-# Scientific Knowledge
-# ==============================
+# ==========================================================
+# Initial Scientific Knowledge
+# ==========================================================
 
-knowledge.add(
-    "الخلية",
-    "الخلية هي الوحدة الأساسية في بناء الكائنات الحية ووظائفها. "
-    "تختلف الخلايا في بنيتها ووظائفها، وتوجد خلايا بدائية النوى "
-    "وخلايا حقيقية النوى.",
-    "internal-scientific",
-    "fact"
-)
+def _ensure_initial_knowledge():
+
+    initial_items = [
+
+        (
+            "الخلية",
+
+            "الخلية هي الوحدة الأساسية في بناء "
+            "الكائنات الحية ووظائفها. "
+            "تختلف الخلايا في بنيتها ووظائفها، "
+            "وتوجد خلايا بدائية النوى "
+            "وخلايا حقيقية النوى.",
+
+            "internal-scientific",
+
+            "fact"
+        ),
+
+        (
+            "مثال على فرضية علمية",
+
+            "هذه فرضية علمية توضيحية وليست "
+            "حقيقة مثبتة: قد يؤثر عامل بيئي "
+            "معين في معدل نمو كائن حي، "
+            "لكن إثبات هذه الفرضية يتطلب "
+            "تجارب وبيانات قابلة للتحقق.",
+
+            "internal-scientific",
+
+            "hypothesis"
+        ),
+
+        (
+            "مثال على استنتاج علمي",
+
+            "إذا أظهرت مجموعة من التجارب أن "
+            "ارتفاع درجة الحرارة ضمن نطاق "
+            "محدد يرتبط بزيادة معدل تفاعل معين، "
+            "فيمكن استنتاج وجود علاقة بين "
+            "درجة الحرارة ومعدل التفاعل ضمن "
+            "شروط التجربة. "
+            "هذا الاستنتاج يعتمد على البيانات "
+            "المتاحة ولا يعني بالضرورة وجود "
+            "علاقة عامة في جميع الظروف.",
+
+            "internal-scientific",
+
+            "inference"
+        )
+    ]
+
+    for (
+        title,
+        content,
+        source,
+        knowledge_type
+    ) in initial_items:
+
+        try:
+
+            knowledge.add(
+                title=title,
+                content=content,
+                source=source,
+                knowledge_type=knowledge_type
+            )
+
+        except Exception:
+            # إذا كانت المعلومة موجودة
+            # أو قاعدة البيانات غير متاحة
+            # لا نوقف استيراد النظام بالكامل.
+            pass
 
 
-knowledge.add(
-    "مثال على فرضية علمية",
-    "هذه فرضية علمية توضيحية وليست حقيقة مثبتة: "
-    "قد يؤثر عامل بيئي معين في معدل نمو كائن حي، "
-    "لكن إثبات هذه الفرضية يتطلب تجارب وبيانات قابلة للتحقق.",
-    "internal-scientific",
-    "hypothesis"
-)
-
-
-knowledge.add(
-    "مثال على استنتاج علمي",
-    "إذا أظهرت مجموعة من التجارب أن ارتفاع درجة الحرارة ضمن "
-    "نطاق محدد يرتبط بزيادة معدل تفاعل معين، فيمكن استنتاج "
-    "وجود علاقة بين درجة الحرارة ومعدل التفاعل ضمن شروط التجربة. "
-    "هذا الاستنتاج يعتمد على البيانات المتاحة ولا يعني بالضرورة "
-    "وجود علاقة عامة في جميع الظروف.",
-    "internal-scientific",
-    "inference"
-)
+_ensure_initial_knowledge()
