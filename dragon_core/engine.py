@@ -35,6 +35,8 @@ class DragonEngine:
     - معالجة نتائج الويب بواسطة Gemini
     - البحث في المعرفة
     - استرجاع الذاكرة العلمية
+    - استرجاع الذاكرة الدلالية عند توفرها
+    - دمج نتائج الذاكرة
     - تطبيق السياسة العلمية
     - بناء إجابات منظمة
     """
@@ -48,7 +50,7 @@ class DragonEngine:
     # ==========================================================
 
     def process(self, message: str) -> dict:
-        message = message.strip()
+        message = str(message or "").strip()
 
         if not message:
             return {
@@ -59,34 +61,72 @@ class DragonEngine:
         # ======================================================
         # Intent Check: Greetings / Conversational Bypass
         # ======================================================
-        normalized_msg = message.lower().strip().rstrip("!.,؟")
+
+        normalized_msg = (
+            message.lower()
+            .strip()
+            .rstrip("!.,؟")
+        )
+
         greetings = {
-            "hello", "hi", "hey", "greetings", "good morning", "good evening",
-            "أهلاً", "مرحبا", "مرحباً", "السلام عليكم", "اهلا", "اهلان", "سلام", "هلا", "أهلين"
+            "hello",
+            "hi",
+            "hey",
+            "greetings",
+            "good morning",
+            "good evening",
+            "أهلاً",
+            "مرحبا",
+            "مرحباً",
+            "السلام عليكم",
+            "اهلا",
+            "اهلان",
+            "سلام",
+            "هلا",
+            "أهلين"
         }
-        
+
         if normalized_msg in greetings:
-            greeting_response = "أهلاً بك! كيف يمكنني مساعدتك اليوم؟"
-            memory.add("user", message)
-            memory.add("assistant", greeting_response)
+
+            greeting_response = (
+                "أهلاً بك! كيف يمكنني مساعدتك اليوم؟"
+            )
+
+            self._safe_memory_add(
+                "user",
+                message
+            )
+
+            self._safe_memory_add(
+                "assistant",
+                greeting_response
+            )
+
             return {
                 "status": "success",
                 "response": greeting_response,
                 "knowledge_matches": 0,
                 "scientific_memory_matches": 0,
+                "semantic_memory_matches": 0,
                 "web_search_used": False,
                 "web_results": 0,
                 "knowledge_saved": 0,
                 "gemini_used": False,
                 "evidence_status": "direct_response",
                 "evidence_confidence": "high",
-                "scientific_policy_version": scientific_policy_version(),
-                "scientific_rules_active": len(self.scientific_rules),
-                "security_confirmation_required": security.requires_confirmation()
+                "scientific_policy_version":
+                    scientific_policy_version(),
+                "scientific_rules_active":
+                    len(self.scientific_rules),
+                "security_confirmation_required":
+                    security.requires_confirmation()
             }
 
+        # ======================================================
         # حفظ رسالة المستخدم
-        memory.add(
+        # ======================================================
+
+        self._safe_memory_add(
             "user",
             message
         )
@@ -123,13 +163,48 @@ class DragonEngine:
         # Knowledge Retrieval
         # ======================================================
 
-        knowledge_results = knowledge.search(message)
+        try:
+            knowledge_results = (
+                knowledge.search(message) or []
+            )
+        except Exception:
+            knowledge_results = []
 
         # ======================================================
-        # Scientific Memory
+        # Memory Retrieval
         # ======================================================
+        #
+        # هنا يبدأ الدمج الحقيقي مع Memory Engine.
+        #
+        # الطبقة الأولى:
+        # الذاكرة العلمية القديمة في DRAGON.
+        #
+        # الطبقة الثانية:
+        # الذاكرة الدلالية/vector إذا وفرها memory.py.
+        #
+        # هذا يجعل engine.py غير مرتبط مباشرة بـ
+        # Supabase أو Ollama أو أي Provider.
+        #
 
-        previous_memories = memory.search_scientific(message)
+        previous_memories = (
+            self._retrieve_relevant_memories(message)
+        )
+
+        scientific_memory_count = 0
+        semantic_memory_count = 0
+
+        for item in previous_memories:
+
+            memory_type = self._get_memory_field(
+                item,
+                "memory_source",
+                ""
+            )
+
+            if memory_type == "semantic":
+                semantic_memory_count += 1
+            else:
+                scientific_memory_count += 1
 
         # ======================================================
         # Automatic Web Search
@@ -137,6 +212,7 @@ class DragonEngine:
 
         # إذا لم توجد معرفة داخلية كافية،
         # يبحث DRAGON تلقائيًا في الويب.
+
         if not knowledge_results:
 
             web_result = self._process_automatic_web_search(
@@ -151,56 +227,345 @@ class DragonEngine:
         # Response Generation
         # ======================================================
 
-        response, evidence_evaluation = self._generate_response(
-            message,
-            knowledge_results,
-            previous_memories
+        response, evidence_evaluation = (
+            self._generate_response(
+                message,
+                knowledge_results,
+                previous_memories
+            )
         )
 
         # ======================================================
         # Store Assistant Memory
         # ======================================================
 
-        memory_content = response
-
-        # لا نخزن قسم الذاكرة داخل الذاكرة مرة أخرى.
-        memory_marker = "\n\nمن الذاكرة العلمية السابقة:"
-
-        if memory_marker in memory_content:
-            memory_content = memory_content.split(
-                memory_marker,
-                1
-            )[0]
-
-        if memory_content.strip():
-            memory.add(
-                "assistant",
-                memory_content,
-                memory_type="scientific",
-                evidence_status=evidence_evaluation[
-                    "evidence_status"
-                ],
-                confidence=evidence_evaluation[
-                    "confidence"
-                ]
-            )
+        self._store_assistant_memory(
+            response,
+            evidence_evaluation
+        )
 
         return {
             "status": "success",
             "response": response,
-            "knowledge_matches": len(knowledge_results),
-            "scientific_memory_matches": len(previous_memories),
+            "knowledge_matches":
+                len(knowledge_results),
+            "scientific_memory_matches":
+                scientific_memory_count,
+            "semantic_memory_matches":
+                semantic_memory_count,
+            "total_memory_matches":
+                len(previous_memories),
             "scientific_policy_version":
                 scientific_policy_version(),
             "scientific_rules_active":
                 len(self.scientific_rules),
             "evidence_status":
-                evidence_evaluation["evidence_status"],
+                evidence_evaluation.get(
+                    "evidence_status",
+                    "unknown"
+                ),
             "evidence_confidence":
-                evidence_evaluation["confidence"],
+                evidence_evaluation.get(
+                    "confidence",
+                    "unknown"
+                ),
             "security_confirmation_required":
                 security.requires_confirmation()
         }
+
+    # ==========================================================
+    # Memory Engine
+    # ==========================================================
+
+    def _retrieve_relevant_memories(
+        self,
+        message: str
+    ):
+        """
+        استرجاع الذاكرة من طبقات متعددة.
+
+        لا نفترض أن memory.py يحتوي على
+        Memory Engine الجديد بالفعل.
+
+        إذا كان يحتوي على search_relevant()
+        فسيتم استخدامه تلقائيًا.
+
+        وإذا لم يكن موجودًا، يستمر DRAGON
+        باستخدام الذاكرة العلمية الحالية.
+        """
+
+        memories = []
+
+        # ------------------------------------------------------
+        # Scientific Memory
+        # ------------------------------------------------------
+
+        try:
+
+            scientific_memories = (
+                memory.search_scientific(message)
+                or []
+            )
+
+            for item in scientific_memories:
+
+                self._set_memory_source(
+                    item,
+                    "scientific"
+                )
+
+                memories.append(item)
+
+        except Exception:
+            pass
+
+        # ------------------------------------------------------
+        # Semantic / Vector Memory
+        # ------------------------------------------------------
+
+        semantic_search = getattr(
+            memory,
+            "search_relevant",
+            None
+        )
+
+        if callable(semantic_search):
+
+            semantic_memories = []
+
+            try:
+
+                semantic_memories = (
+                    semantic_search(
+                        message,
+                        limit=5
+                    )
+                    or []
+                )
+
+            except TypeError:
+
+                try:
+
+                    semantic_memories = (
+                        semantic_search(message)
+                        or []
+                    )
+
+                except Exception:
+                    semantic_memories = []
+
+            except Exception:
+                semantic_memories = []
+
+            for item in semantic_memories:
+
+                self._set_memory_source(
+                    item,
+                    "semantic"
+                )
+
+                memories.append(item)
+
+        # ------------------------------------------------------
+        # Merge / Deduplicate
+        # ------------------------------------------------------
+
+        return self._merge_memories(
+            memories,
+            limit=8
+        )
+
+    def _merge_memories(
+        self,
+        memories,
+        limit: int = 8
+    ):
+        """
+        دمج نتائج الذاكرة ومنع التكرار.
+
+        يسمح هذا لاحقًا بوجود:
+        - Short-Term Memory
+        - Long-Term Memory
+        - Semantic Memory
+        - Scientific Memory
+        - Episodic Memory
+        """
+
+        merged = []
+        seen = set()
+
+        for item in memories or []:
+
+            content = self._get_memory_field(
+                item,
+                "content",
+                ""
+            )
+
+            content = str(
+                content or ""
+            ).strip()
+
+            if not content:
+                continue
+
+            key = " ".join(
+                content.split()
+            ).lower()
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            merged.append(item)
+
+            if len(merged) >= limit:
+                break
+
+        return merged
+
+    def _set_memory_source(
+        self,
+        item,
+        source: str
+    ):
+        """
+        إضافة مصدر الذاكرة بدون افتراض
+        نوع البيانات المستخدم داخل memory.py.
+        """
+
+        if isinstance(item, dict):
+
+            if not item.get("memory_source"):
+                item["memory_source"] = source
+
+        else:
+
+            try:
+
+                if not getattr(
+                    item,
+                    "memory_source",
+                    None
+                ):
+                    setattr(
+                        item,
+                        "memory_source",
+                        source
+                    )
+
+            except Exception:
+                pass
+
+    def _get_memory_field(
+        self,
+        item,
+        field: str,
+        default=None
+    ):
+        """
+        قراءة حقل الذاكرة سواء كانت النتيجة:
+        object أو dict.
+        """
+
+        if isinstance(item, dict):
+
+            return item.get(
+                field,
+                default
+            )
+
+        try:
+
+            return getattr(
+                item,
+                field,
+                default
+            )
+
+        except Exception:
+
+            return default
+
+    def _safe_memory_add(
+        self,
+        role: str,
+        content: str,
+        **kwargs
+    ):
+        """
+        إضافة آمنة للذاكرة.
+
+        فشل الذاكرة لا يجب أن يؤدي
+        إلى توقف DragonEngine.
+        """
+
+        try:
+
+            memory.add(
+                role,
+                content,
+                **kwargs
+            )
+
+        except Exception:
+            pass
+
+    def _store_assistant_memory(
+        self,
+        response: str,
+        evidence_evaluation: dict
+    ):
+        """
+        حفظ رد DRAGON في الذاكرة الحالية.
+
+        لاحقًا يمكن تطوير هذه المرحلة إلى:
+        Memory Extraction
+        Memory Classification
+        Memory Consolidation
+        Conflict Detection
+        """
+
+        memory_content = str(
+            response or ""
+        ).strip()
+
+        # ------------------------------------------------------
+        # منع تضخم الذاكرة
+        # ------------------------------------------------------
+
+        memory_marker = (
+            "\n\nمن الذاكرة العلمية السابقة:"
+        )
+
+        if memory_marker in memory_content:
+
+            memory_content = (
+                memory_content.split(
+                    memory_marker,
+                    1
+                )[0]
+            )
+
+        if not memory_content:
+            return
+
+        self._safe_memory_add(
+            "assistant",
+            memory_content,
+            memory_type="scientific",
+            evidence_status=
+                evidence_evaluation.get(
+                    "evidence_status",
+                    "unknown"
+                ),
+            confidence=
+                evidence_evaluation.get(
+                    "confidence",
+                    "unknown"
+                )
+        )
 
     # ==========================================================
     # Automatic Web Search
@@ -212,22 +577,29 @@ class DragonEngine:
         previous_memories
     ):
         """
-        يبحث تلقائيًا في الويب عندما لا توجد معرفة داخلية كافية.
+        يبحث تلقائيًا في الويب عندما لا توجد
+        معرفة داخلية كافية.
 
         المسار:
 
         السؤال
+        -> Memory Retrieval
         -> Web Search
         -> استخراج المصادر
         -> معالجة النتائج بواسطة Gemini
-        -> بناء إجابة بلغة المستخدم
-        -> حفظ المصادر في قاعدة المعرفة
-        -> حفظ الرد في الذاكرة العلمية
+        -> بناء إجابة
+        -> حفظ المصادر
+        -> حفظ الرد في الذاكرة
         """
 
-        result = web_learning.search_web(
-            question
-        )
+        try:
+
+            result = web_learning.search_web(
+                question
+            )
+
+        except Exception:
+            return None
 
         if not result:
             return None
@@ -280,7 +652,10 @@ class DragonEngine:
             ).strip()
 
             # نفضل محتوى الصفحة على نتيجة البحث المختصرة.
-            answer_text = content or snippet
+
+            answer_text = (
+                content or snippet
+            )
 
             if not answer_text:
                 continue
@@ -295,22 +670,29 @@ class DragonEngine:
             )
 
             # حفظ النتيجة الخام في قاعدة المعرفة.
+
             if title and url:
 
-                save_result = knowledge.learn(
-                    title=title,
-                    content=answer_text,
-                    source=url,
-                    knowledge_type="web_unverified"
-                )
+                try:
 
-                if save_result.get(
-                    "status"
-                ) in (
-                    "learned",
-                    "duplicate"
-                ):
-                    saved_count += 1
+                    save_result = knowledge.learn(
+                        title=title,
+                        content=answer_text,
+                        source=url,
+                        knowledge_type="web_unverified"
+                    )
+
+                    if save_result.get(
+                        "status"
+                    ) in (
+                        "learned",
+                        "duplicate"
+                    ):
+
+                        saved_count += 1
+
+                except Exception:
+                    pass
 
         if not source_items:
             return None
@@ -319,18 +701,23 @@ class DragonEngine:
         # Gemini Web Processing
         # ======================================================
 
-        gemini_response = self._process_web_results_with_gemini(
-            question,
-            source_items
+        gemini_response = (
+            self._process_web_results_with_gemini(
+                question,
+                source_items
+            )
         )
 
         if gemini_response:
 
-            final_response = gemini_response
+            final_response = (
+                gemini_response
+            )
 
         else:
 
             # مسار احتياطي إذا لم يعمل Gemini.
+
             response_sections = []
 
             for item in source_items:
@@ -345,7 +732,9 @@ class DragonEngine:
             final_response = (
                 "بحثت تلقائيًا في الويب لأن قاعدة المعرفة "
                 "الحالية لم تحتوي على إجابة كافية.\n\n"
-                + "\n\n".join(response_sections)
+                + "\n\n".join(
+                    response_sections
+                )
             )
 
         final_response += (
@@ -363,8 +752,9 @@ class DragonEngine:
                 )
             )
 
-        # حفظ نتيجة البحث في الذاكرة العلمية
-        memory.add(
+        # حفظ نتيجة البحث في الذاكرة العلمية.
+
+        self._safe_memory_add(
             "assistant",
             final_response,
             memory_type="scientific",
@@ -378,6 +768,16 @@ class DragonEngine:
             "knowledge_matches": 0,
             "scientific_memory_matches":
                 len(previous_memories),
+            "semantic_memory_matches":
+                sum(
+                    1
+                    for item in previous_memories
+                    if self._get_memory_field(
+                        item,
+                        "memory_source",
+                        ""
+                    ) == "semantic"
+                ),
             "web_search_used": True,
             "web_results":
                 len(source_items),
@@ -424,8 +824,10 @@ class DragonEngine:
         if not source_items:
             return None
 
-        language_instruction = self._detect_response_language(
-            question
+        language_instruction = (
+            self._detect_response_language(
+                question
+            )
         )
 
         source_blocks = []
@@ -441,8 +843,10 @@ class DragonEngine:
                 )
             )
 
-        sources_text = "\n\n---\n\n".join(
-            source_blocks
+        sources_text = (
+            "\n\n---\n\n".join(
+                source_blocks
+            )
         )
 
         prompt = f"""
@@ -540,6 +944,7 @@ class DragonEngine:
                 )
 
                 if text:
+
                     generated_parts.append(
                         str(text).strip()
                     )
@@ -582,17 +987,20 @@ class DragonEngine:
         for char in question:
 
             if "\u0600" <= char <= "\u06ff":
+
                 arabic_characters += 1
 
             elif (
                 "a" <= char.lower() <= "z"
             ):
+
                 latin_characters += 1
 
         if arabic_characters > latin_characters:
             return "العربية"
 
         if latin_characters > 0:
+
             return (
                 "نفس لغة السؤال. "
                 "إذا كان السؤال بالإنجليزية فأجب بالإنجليزية."
@@ -615,6 +1023,7 @@ class DragonEngine:
         ]
 
         if len(parts) != 5:
+
             return {
                 "status": "error",
                 "message": (
@@ -660,6 +1069,7 @@ class DragonEngine:
         ]
 
         if len(parts) != 5:
+
             return {
                 "status": "error",
                 "message": (
@@ -705,6 +1115,7 @@ class DragonEngine:
         ]
 
         if len(parts) != 4:
+
             return {
                 "status": "error",
                 "message": (
@@ -753,6 +1164,7 @@ class DragonEngine:
         ].strip()
 
         if not content:
+
             return {
                 "status": "error",
                 "message": (
@@ -768,17 +1180,20 @@ class DragonEngine:
         )
 
         if result["status"] == "learned":
+
             response = (
                 "تم تعلم المعلومة وحفظها في قاعدة المعرفة."
             )
 
         elif result["status"] == "duplicate":
+
             response = (
                 "هذه المعلومة موجودة بالفعل "
                 "في قاعدة المعرفة."
             )
 
         else:
+
             response = (
                 "لم يتم حفظ المعلومة."
             )
@@ -814,13 +1229,16 @@ class DragonEngine:
         if not knowledge_results:
 
             if previous_memories:
+
                 return (
                     self._build_memory_response(
                         previous_memories
                     ),
                     {
-                        "evidence_status": "memory_based",
-                        "confidence": "low"
+                        "evidence_status":
+                            "memory_based",
+                        "confidence":
+                            "low"
                     }
                 )
 
@@ -828,8 +1246,10 @@ class DragonEngine:
                 "لا توجد لدي حاليًا معلومات مرتبطة بهذا السؤال "
                 "في قاعدة المعرفة."
             ), {
-                "evidence_status": "insufficient",
-                "confidence": "low"
+                "evidence_status":
+                    "insufficient",
+                "confidence":
+                    "low"
             }
 
         # ------------------------------------------------------
@@ -877,6 +1297,7 @@ class DragonEngine:
             )
 
             if previous_memories:
+
                 response += (
                     "\n\n"
                     + self._build_memory_response(
@@ -937,6 +1358,7 @@ class DragonEngine:
         )
 
         if previous_memories:
+
             response += (
                 "\n\n"
                 + self._build_memory_response(
@@ -955,7 +1377,9 @@ class DragonEngine:
         message: str
     ) -> bool:
 
-        normalized = message.strip().lower()
+        normalized = (
+            message.strip().lower()
+        )
 
         conceptual_patterns = (
             "ما الفرق بين",
@@ -986,17 +1410,22 @@ class DragonEngine:
         knowledge_results
     ):
 
-        selected = self._select_conceptual_results(
-            knowledge_results
+        selected = (
+            self._select_conceptual_results(
+                knowledge_results
+            )
         )
 
         if not selected:
+
             return (
                 "السؤال مفاهيمي، لكن لا توجد معلومات "
                 "كافية في قاعدة المعرفة الحالية للإجابة عليه."
             ), {
-                "evidence_status": "not_applicable",
-                "confidence": "not_applicable"
+                "evidence_status":
+                    "not_applicable",
+                "confidence":
+                    "not_applicable"
             }
 
         sections = []
@@ -1023,8 +1452,10 @@ class DragonEngine:
         )
 
         return response, {
-            "evidence_status": "not_applicable",
-            "confidence": "not_applicable"
+            "evidence_status":
+                "not_applicable",
+            "confidence":
+                "not_applicable"
         }
 
     # ==========================================================
@@ -1051,31 +1482,39 @@ class DragonEngine:
         results
     ):
 
-        # نعطي أولوية للمصادر العلمية الداخلية
+        # نعطي أولوية للمصادر العلمية الداخلية.
+
         internal_scientific = [
             result
             for result in results
-            if result.source == "internal-scientific"
+            if result.source ==
+            "internal-scientific"
         ]
 
         if internal_scientific:
             results = internal_scientific
 
-        # نضمن عدم تكرار نفس نوع المعرفة
-        selected = []
+        # نضمن عدم تكرار نفس نوع المعرفة.
 
+        selected = []
         used_types = set()
 
         for result in results:
 
-            knowledge_type = result.knowledge_type
+            knowledge_type = (
+                result.knowledge_type
+            )
 
             if knowledge_type not in used_types:
+
                 selected.append(result)
-                used_types.add(knowledge_type)
+                used_types.add(
+                    knowledge_type
+                )
 
         # إذا كانت لدينا نتائج إضافية مفيدة
         # نسمح بها حتى ثلاثة عناصر فقط.
+
         if len(selected) < 3:
 
             for result in results:
@@ -1102,26 +1541,55 @@ class DragonEngine:
         if not previous_memories:
             return ""
 
-        latest_memory = previous_memories[-1]
+        latest_memory = (
+            previous_memories[-1]
+        )
 
-        content = latest_memory.content.strip()
+        content = self._get_memory_field(
+            latest_memory,
+            "content",
+            ""
+        )
 
-        # منع تضخم الذاكرة داخل الرد
+        content = str(
+            content or ""
+        ).strip()
+
+        # منع تضخم الذاكرة داخل الرد.
+
         max_memory_length = 700
 
         if len(content) > max_memory_length:
+
             content = (
-                content[:max_memory_length].rstrip()
+                content[:max_memory_length]
+                .rstrip()
                 + "..."
             )
 
+        evidence_status = (
+            self._get_memory_field(
+                latest_memory,
+                "evidence_status",
+                "غير محددة"
+            )
+        )
+
+        confidence = (
+            self._get_memory_field(
+                latest_memory,
+                "confidence",
+                "غير محددة"
+            )
+        )
+
         return (
-            "من الذاكرة العلمية السابقة:\n"
+            "من الذاكرة السابقة:\n"
             f"{content}\n"
             f"حالة الأدلة السابقة: "
-            f"{latest_memory.evidence_status or 'غير محددة'}\n"
+            f"{evidence_status}\n"
             f"درجة الثقة السابقة: "
-            f"{latest_memory.confidence or 'غير محددة'}"
+            f"{confidence}"
         )
 
     # ==========================================================
@@ -1186,7 +1654,10 @@ class DragonEngine:
                 "الحالة العلمية: نوع المعرفة غير معروف."
             )
 
-        return f"{response}\n{policy_note}"
+        return (
+            f"{response}\n"
+            f"{policy_note}"
+        )
 
 
 dragon_engine = DragonEngine()
