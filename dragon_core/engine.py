@@ -63,6 +63,25 @@ class DragonEngine:
         )
 
         # ======================================================
+        # Intent Check: Greetings / Conversational Bypass
+        # ======================================================
+        normalized_msg = message.lower().strip()
+        greetings = {"hello", "hi", "hey", "أهلاً", "مرحبا", "مرحباً", "السلام عليكم", "اهلا"}
+        if normalized_msg in greetings:
+            greeting_response = "أهلاً بك! كيف يمكنني مساعدتك اليوم؟"
+            memory.add("assistant", greeting_response)
+            return {
+                "status": "success",
+                "response": greeting_response,
+                "knowledge_matches": 0,
+                "scientific_memory_matches": 0,
+                "web_search_used": False,
+                "evidence_status": "direct_response",
+                "confidence": "high",
+                "security_confirmation_required": security.requires_confirmation()
+            }
+
+        # ======================================================
         # Manual Learning
         # ======================================================
 
