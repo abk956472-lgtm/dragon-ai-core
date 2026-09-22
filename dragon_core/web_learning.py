@@ -300,18 +300,18 @@ class WebLearning:
             if term in normalized_result:
                 matches += 1
 
-        # For a question with only one important term,
+        # If the query has only one meaningful term,
         # one match is enough.
         if len(query_terms) == 1:
             return matches >= 1
 
-        # For normal questions, at least one meaningful
-        # query term is enough to consider the result
-        # potentially related.
+        # For multi-term questions, require at least
+        # two meaningful query terms to match.
         #
-        # The purpose is only to detect clearly unrelated
-        # pages, not to perform strict ranking.
-        return matches >= 1
+        # This prevents pages that happen to contain
+        # only a generic term such as a year from being
+        # treated as related.
+        return matches >= 2
 
     def _filter_obviously_unrelated_results(
         self,
