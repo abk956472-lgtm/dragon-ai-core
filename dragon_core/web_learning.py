@@ -20,8 +20,6 @@ MAX_RESULTS = 5
 
 MAX_CONTENT_LENGTH = 12000
 
-# Minimum relevance score required before accepting
-# a web result as related to the user's question.
 MIN_RELEVANCE_SCORE = 2
 
 
@@ -47,6 +45,10 @@ class WebLearning:
                 ),
             }
         )
+
+    # =========================================================
+    # QUERY PREPARATION
+    # =========================================================
 
     def _prepare_search_query(self, query: str) -> str:
         query = str(query or "").strip()
@@ -101,16 +103,23 @@ class WebLearning:
 
     def _build_retry_query(self, query: str) -> str:
         """
-        Build a safer second search query.
+        Build a second search query using the important
+        terms from the original query.
 
-        The old implementation always appended
-        "latest 2026", which was inappropriate for
-        many ordinary factual questions.
-
-        The new version keeps the important terms and
-        searches the exact core phrase first.
+        We deliberately do NOT add arbitrary dates such
+        as "latest 2026".
         """
-        query = self._prepare_search_query(query)
+
+        original_query = str(
+            query or ""
+        ).strip()
+
+        if not original_query:
+            return ""
+
+        query = self._prepare_search_query(
+            original_query
+        )
 
         if not query:
             return ""
@@ -170,14 +179,23 @@ class WebLearning:
             important_words
         )
 
-        # Search the important phrase instead of
-        # adding an arbitrary year.
-        if len(important_words) >= 2:
-            retry_query = f'"{core_query}"'
-        else:
-            retry_query = core_query
+        if (
+            core_query.lower()
+            == query.lower()
+        ):
+            if len(important_words) >= 2:
+                return f'"{core_query}"'
 
-        return retry_query.strip()
+            return core_query
+
+        if len(important_words) >= 2:
+            return f'"{core_query}"'
+
+        return core_query
+
+    # =========================================================
+    # TEXT NORMALIZATION
+    # =========================================================
 
     def _normalize_text(self, text: str) -> str:
         if not text:
@@ -214,6 +232,20 @@ class WebLearning:
         ).strip()
 
         return text
+
+    def _tokenize(self, text: str):
+        normalized = self._normalize_text(
+            text
+        )
+
+        if not normalized:
+            return []
+
+        return normalized.split()
+
+    # =========================================================
+    # QUERY TERMS
+    # =========================================================
 
     def _get_query_terms(
         self,
@@ -262,6 +294,8 @@ class WebLearning:
             "for",
             "from",
             "with",
+            "is",
+            "are",
         }
 
         terms = []
@@ -278,16 +312,37 @@ class WebLearning:
 
         return terms
 
+    # =========================================================
+    # RELEVANCE
+    # =========================================================
+
+    def _count_term_matches(
+        self,
+        terms,
+        text
+    ):
+        tokens = set(
+            self._tokenize(text)
+        )
+
+        return sum(
+            1
+            for term in terms
+            if term in tokens
+        )
+
     def _score_result_relevance(
         self,
         query: str,
         result: dict
     ) -> int:
         """
-        Calculate how strongly a web result is related
-        to the search query.
+        Calculate relevance before accepting a web result.
 
-        Higher score = stronger relevance.
+        Title matches receive the strongest weight.
+        Snippet matches receive medium weight.
+        Page content receives a smaller weight when
+        content is already available.
         """
 
         query_terms = self._get_query_terms(
@@ -296,6 +351,95 @@ class WebLearning:
 
         if not query_terms:
             return 0
+
+        title = self._normalize_text(
+            result.get("title", "")
+        )
+
+        snippet = self._normalize_text(
+            result.get("snippet", "")
+        )
+
+        content = self._normalize_text(
+            result.get("content", "")[:5000]
+        )
+
+        title_tokens = set(
+            title.split()
+        )
+
+        snippet_tokens = set(
+            snippet.split()
+        )
+
+        content_tokens = set(
+            content.split()
+        )
+
+        score = 0
+
+        normalized_query = self._normalize_text(
+            query
+        )
+
+        searchable_text = " ".join(
+            [
+                title,
+                snippet,
+                content,
+            ]
+        )
+
+        # Exact phrase match.
+        if (
+            normalized_query
+            and normalized_query in searchable_text
+        ):
+            score += 5
+
+        matched_terms = 0
+
+        for term in query_terms:
+
+            if term in title_tokens:
+                score += 4
+                matched_terms += 1
+
+            elif term in snippet_tokens:
+                score += 2
+                matched_terms += 1
+
+            elif term in content_tokens:
+                score += 1
+                matched_terms += 1
+
+        # Strong bonus when all query terms are found.
+        if matched_terms == len(query_terms):
+            score += 4
+
+        return score
+
+    def _result_is_related(
+        self,
+        query: str,
+        result: dict
+    ) -> bool:
+        """
+        Decide whether a result is sufficiently related.
+
+        The old implementation accepted a multi-word
+        query when only one word matched.
+
+        This implementation is stricter while still
+        allowing useful explanatory results.
+        """
+
+        query_terms = self._get_query_terms(
+            query
+        )
+
+        if not query_terms:
+            return False
 
         title = self._normalize_text(
             result.get("title", "")
@@ -318,63 +462,6 @@ class WebLearning:
         ).strip()
 
         if not searchable_text:
-            return 0
-
-        score = 0
-
-        normalized_query = self._normalize_text(
-            query
-        )
-
-        # Exact phrase match is strong evidence.
-        if (
-            normalized_query
-            and normalized_query in searchable_text
-        ):
-            score += 4
-
-        # Term matching.
-        matched_terms = 0
-
-        for term in query_terms:
-            if term in title:
-                score += 3
-                matched_terms += 1
-                continue
-
-            if term in snippet:
-                score += 2
-                matched_terms += 1
-                continue
-
-            if term in content:
-                score += 1
-                matched_terms += 1
-
-        # A result matching all important query terms
-        # receives an additional confidence bonus.
-        if matched_terms == len(query_terms):
-            score += 3
-
-        return score
-
-    def _result_is_related(
-        self,
-        query: str,
-        result: dict
-    ) -> bool:
-        """
-        Strict relevance check.
-
-        For a multi-term query, one matching word is
-        not enough anymore.
-        """
-
-        query_terms = self._get_query_terms(
-            query
-        )
-
-        if not query_terms:
             return False
 
         score = self._score_result_relevance(
@@ -383,54 +470,63 @@ class WebLearning:
         )
 
         if len(query_terms) == 1:
-            return score >= 2
+            return score >= MIN_RELEVANCE_SCORE
 
-        # For multi-term questions, require at least
-        # the minimum relevance score and meaningful
-        # coverage of the important terms.
-        title = self._normalize_text(
-            result.get("title", "")
+        title_matches = self._count_term_matches(
+            query_terms,
+            title
         )
 
-        snippet = self._normalize_text(
-            result.get("snippet", "")
+        snippet_matches = self._count_term_matches(
+            query_terms,
+            snippet
         )
 
-        content = self._normalize_text(
-            result.get("content", "")[:5000]
+        content_matches = self._count_term_matches(
+            query_terms,
+            content
         )
 
-        searchable_text = " ".join(
-            [
-                title,
-                snippet,
-                content,
-            ]
+        total_matches = len(
+            {
+                term
+                for term in query_terms
+                if (
+                    term in set(title.split())
+                    or term in set(snippet.split())
+                    or term in set(content.split())
+                )
+            }
         )
 
-        matched_terms = sum(
-            1
-            for term in query_terms
-            if term in searchable_text
+        # Exact phrase is strong enough.
+        normalized_query = self._normalize_text(
+            query
         )
 
-        # For two important terms, both should normally
-        # appear somewhere in the result.
+        if (
+            normalized_query
+            and normalized_query in searchable_text
+        ):
+            return True
+
+        # Two-term query:
+        # normally require both terms.
         if len(query_terms) == 2:
             return (
-                matched_terms >= 2
+                total_matches >= 2
                 and score >= MIN_RELEVANCE_SCORE
             )
 
-        # For longer queries, require at least half
-        # of the important terms, rounded up.
-        required_terms = max(
+        # Longer query:
+        # require meaningful coverage.
+        required_matches = max(
             2,
             (len(query_terms) + 1) // 2
         )
 
         return (
-            matched_terms >= required_terms
+            total_matches >= required_matches
             and score >= MIN_RELEVANCE_SCORE
         )
 
@@ -445,23 +541,24 @@ class WebLearning:
         scored_results = []
 
         for result in results:
+            if not self._result_is_related(
+                query,
+                result
+            ):
+                continue
+
             score = self._score_result_relevance(
                 query,
                 result
             )
 
-            if self._result_is_related(
-                query,
-                result
-            ):
-                scored_results.append(
-                    (
-                        score,
-                        result
-                    )
+            scored_results.append(
+                (
+                    score,
+                    result
                 )
+            )
 
-        # Strongest relevant results first.
         scored_results.sort(
             key=lambda item: item[0],
             reverse=True
@@ -473,6 +570,10 @@ class WebLearning:
             in scored_results[:MAX_RESULTS]
         ]
 
+    # =========================================================
+    # URL HANDLING
+    # =========================================================
+
     def _normalize_search_url(
         self,
         url: str
@@ -483,24 +584,36 @@ class WebLearning:
         url = html.unescape(url)
         url = urllib.parse.unquote(url)
 
-        parsed = urllib.parse.urlparse(url)
+        parsed = urllib.parse.urlparse(
+            url
+        )
 
         if "bing.com" in parsed.netloc.lower():
             query = urllib.parse.parse_qs(
                 parsed.query
             )
 
-            for key in ("u", "url", "r"):
-                values = query.get(key)
+            for key in (
+                "u",
+                "url",
+                "r"
+            ):
+                values = query.get(
+                    key
+                )
 
                 if values:
                     candidate = values[0]
 
-                    if candidate.startswith("http"):
+                    if candidate.startswith(
+                        "http"
+                    ):
                         return candidate
 
-                    decoded = self._decode_bing_url(
-                        candidate
+                    decoded = (
+                        self._decode_bing_url(
+                            candidate
+                        )
                     )
 
                     if decoded:
@@ -576,6 +689,10 @@ class WebLearning:
         except Exception:
             return False
 
+    # =========================================================
+    # TEXT CLEANING
+    # =========================================================
+
     def _clean_text(
         self,
         text: str
@@ -600,6 +717,10 @@ class WebLearning:
         ).strip()
 
         return text
+
+    # =========================================================
+    # BING RSS
+    # =========================================================
 
     def _parse_bing_rss(
         self,
@@ -682,6 +803,10 @@ class WebLearning:
 
         return results
 
+    # =========================================================
+    # PAGE CONTENT
+    # =========================================================
+
     def _extract_html_content(
         self,
         text: str
@@ -693,21 +818,30 @@ class WebLearning:
             r"<script\b[^>]*>.*?</script>",
             " ",
             text,
-            flags=re.IGNORECASE | re.DOTALL,
+            flags=(
+                re.IGNORECASE
+                | re.DOTALL
+            ),
         )
 
         text = re.sub(
             r"<style\b[^>]*>.*?</style>",
             " ",
             text,
-            flags=re.IGNORECASE | re.DOTALL,
+            flags=(
+                re.IGNORECASE
+                | re.DOTALL
+            ),
         )
 
         text = re.sub(
             r"<noscript\b[^>]*>.*?</noscript>",
             " ",
             text,
-            flags=re.IGNORECASE | re.DOTALL,
+            flags=(
+                re.IGNORECASE
+                | re.DOTALL
+            ),
         )
 
         text = re.sub(
@@ -754,8 +888,10 @@ class WebLearning:
             )
 
             if (
-                "text/html" not in content_type
-                and "text/plain" not in content_type
+                "text/html"
+                not in content_type
+                and "text/plain"
+                not in content_type
                 and "application/xhtml+xml"
                 not in content_type
             ):
@@ -770,6 +906,10 @@ class WebLearning:
 
         except Exception:
             return ""
+
+    # =========================================================
+    # SEARCH
+    # =========================================================
 
     def _perform_search(
         self,
@@ -858,6 +998,15 @@ class WebLearning:
         self,
         query: str
     ):
+        """
+        Search the web and return only sufficiently
+        relevant results.
+
+        IMPORTANT:
+        Unrelated search results are never returned as
+        a fallback.
+        """
+
         search_query = (
             self._prepare_search_query(
                 query
@@ -867,7 +1016,9 @@ class WebLearning:
         if not search_query:
             return {
                 "status": "error",
-                "message": "Empty search query.",
+                "message": (
+                    "Empty search query."
+                ),
                 "results": [],
             }
 
@@ -876,8 +1027,10 @@ class WebLearning:
             # FIRST SEARCH
             # -------------------------------------------------
 
-            first_results = self._perform_search(
-                search_query
+            first_results = (
+                self._perform_search(
+                    search_query
+                )
             )
 
             if first_results:
@@ -951,18 +1104,6 @@ class WebLearning:
             # -------------------------------------------------
             # NO RELEVANT RESULTS
             # -------------------------------------------------
-            #
-            # IMPORTANT:
-            # Never return the original unrelated
-            # Bing results as a fallback.
-            #
-            # This prevents situations such as:
-            #
-            # "ملك الجزائر"
-            #        ↓
-            # unrelated Flipkart results
-            #
-            # -------------------------------------------------
 
             return {
                 "status": "empty",
@@ -988,7 +1129,7 @@ class WebLearning:
             return {
                 "status": "error",
                 "message": (
-                    f"Web search request failed: "
+                    "Web search request failed: "
                     f"{str(exc)}"
                 ),
                 "search_query": search_query,
@@ -999,12 +1140,16 @@ class WebLearning:
             return {
                 "status": "error",
                 "message": (
-                    f"Web search failed: "
+                    "Web search failed: "
                     f"{str(exc)}"
                 ),
                 "search_query": search_query,
                 "results": [],
             }
+
+    # =========================================================
+    # LEARN FROM URL
+    # =========================================================
 
     def learn_from_url(
         self,
