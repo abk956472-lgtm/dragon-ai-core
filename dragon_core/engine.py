@@ -60,7 +60,10 @@ class DragonEngine:
         # Intent Check: Greetings / Conversational Bypass
         # ======================================================
         normalized_msg = message.lower().strip().rstrip("!.,؟")
-        greetings = {"hello", "hi", "hey", "أهلاً", "مرحبا", "مرحباً", "السلام عليكم", "اهلا"}
+        greetings = {
+            "hello", "hi", "hey", "greetings", "good morning", "good evening",
+            "أهلاً", "مرحبا", "مرحباً", "السلام عليكم", "اهلا", "اهلان", "سلام", "هلا", "أهلين"
+        }
         
         if normalized_msg in greetings:
             greeting_response = "أهلاً بك! كيف يمكنني مساعدتك اليوم؟"
