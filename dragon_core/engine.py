@@ -56,19 +56,15 @@ class DragonEngine:
                 "message": "Empty message."
             }
 
-        # حفظ رسالة المستخدم
-        memory.add(
-            "user",
-            message
-        )
-
         # ======================================================
         # Intent Check: Greetings / Conversational Bypass
         # ======================================================
-        normalized_msg = message.lower().strip()
+        normalized_msg = message.lower().strip().rstrip("!.,؟")
         greetings = {"hello", "hi", "hey", "أهلاً", "مرحبا", "مرحباً", "السلام عليكم", "اهلا"}
+        
         if normalized_msg in greetings:
             greeting_response = "أهلاً بك! كيف يمكنني مساعدتك اليوم؟"
+            memory.add("user", message)
             memory.add("assistant", greeting_response)
             return {
                 "status": "success",
@@ -76,10 +72,21 @@ class DragonEngine:
                 "knowledge_matches": 0,
                 "scientific_memory_matches": 0,
                 "web_search_used": False,
+                "web_results": 0,
+                "knowledge_saved": 0,
+                "gemini_used": False,
                 "evidence_status": "direct_response",
-                "confidence": "high",
+                "evidence_confidence": "high",
+                "scientific_policy_version": scientific_policy_version(),
+                "scientific_rules_active": len(self.scientific_rules),
                 "security_confirmation_required": security.requires_confirmation()
             }
+
+        # حفظ رسالة المستخدم
+        memory.add(
+            "user",
+            message
+        )
 
         # ======================================================
         # Manual Learning
