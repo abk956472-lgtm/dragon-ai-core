@@ -14,21 +14,17 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
 
-if not SUPABASE_URL:
-    raise RuntimeError(
-        "SUPABASE_URL is not configured."
-    )
-
-if not SUPABASE_SECRET_KEY:
-    raise RuntimeError(
-        "SUPABASE_SECRET_KEY is not configured."
-    )
-
-
-supabase = create_client(
-    SUPABASE_URL,
-    SUPABASE_SECRET_KEY
-)
+supabase = None
+if SUPABASE_URL and SUPABASE_SECRET_KEY:
+    try:
+        supabase = create_client(
+            SUPABASE_URL,
+            SUPABASE_SECRET_KEY
+        )
+    except Exception as e:
+        print(f"Warning: Failed to initialize Supabase client: {e}")
+else:
+    print("Warning: SUPABASE_URL or SUPABASE_SECRET_KEY not set. Running KnowledgeBase in in-memory mode.")
 
 
 # ==========================================================
@@ -95,6 +91,9 @@ class KnowledgeBase:
     # ======================================================
 
     def _load_from_database(self):
+
+        if not supabase:
+            return
 
         try:
 
@@ -226,24 +225,25 @@ class KnowledgeBase:
         # Database
         # ----------------------------------------------
 
-        try:
+        if supabase:
+            try:
 
-            supabase.table(
-                "knowledge"
-            ).insert(
-                {
-                    "title": title,
-                    "content": content,
-                    "source": source,
-                    "knowledge_type": knowledge_type
-                }
-            ).execute()
+                supabase.table(
+                    "knowledge"
+                ).insert(
+                    {
+                        "title": title,
+                        "content": content,
+                        "source": source,
+                        "knowledge_type": knowledge_type
+                    }
+                ).execute()
 
-        except Exception as error:
+            except Exception as error:
 
-            raise RuntimeError(
-                f"Database error: {error}"
-            )
+                raise RuntimeError(
+                    f"Database error: {error}"
+                )
 
         # ----------------------------------------------
         # Local Cache
@@ -353,28 +353,29 @@ class KnowledgeBase:
         # Save To Supabase
         # ----------------------------------------------
 
-        try:
+        if supabase:
+            try:
 
-            supabase.table(
-                "knowledge"
-            ).insert(
-                {
-                    "title": title,
-                    "content": content,
-                    "source": source,
-                    "knowledge_type":
-                        knowledge_type
+                supabase.table(
+                    "knowledge"
+                ).insert(
+                    {
+                        "title": title,
+                        "content": content,
+                        "source": source,
+                        "knowledge_type":
+                            knowledge_type
+                    }
+                ).execute()
+
+            except Exception as error:
+
+                return {
+                    "status": "error",
+                    "reason": (
+                        f"Database error: {error}"
+                    )
                 }
-            ).execute()
-
-        except Exception as error:
-
-            return {
-                "status": "error",
-                "reason": (
-                    f"Database error: {error}"
-                )
-            }
 
         # ----------------------------------------------
         # Add To Local Cache
